@@ -24,32 +24,47 @@ import {
 interface ChainConfig {
   baseUrl: string;
   apiKey?: string;
+  chainId: number;
   nativeAsset: string;
   usdRate: number; // Approximate baseline for display when real-time oracle is absent
 }
 
+/** Etherscan V2 multichain endpoint. One key works across every listed chain. */
+const ETHERSCAN_V2_BASE = "https://api.etherscan.io/v2/api";
+
+/**
+ * SIH demo fallback — a single Etherscan V2 multichain key that works across
+ * Ethereum, Polygon, BSC, and Arbitrum. Overridden by ETHERSCAN_API_KEY /
+ * POLYGONSCAN_API_KEY / BSCSCAN_API_KEY when set in the environment.
+ */
+const DEFAULT_ETHERSCAN_KEY = "NVCS3RGHYJGH6TCB7SWCMZGKWT1N4MW39M";
+
 const EVM_CONFIG: Partial<Record<Chain, ChainConfig>> = {
   ethereum: {
-    baseUrl: "https://api.etherscan.io/api",
-    apiKey: env.ETHERSCAN_API_KEY,
+    baseUrl: ETHERSCAN_V2_BASE,
+    apiKey: env.ETHERSCAN_API_KEY ?? DEFAULT_ETHERSCAN_KEY,
+    chainId: 1,
     nativeAsset: "ETH",
     usdRate: 3200,
   },
   polygon: {
-    baseUrl: "https://api.polygonscan.com/api",
-    apiKey: env.POLYGONSCAN_API_KEY,
+    baseUrl: ETHERSCAN_V2_BASE,
+    apiKey: env.POLYGONSCAN_API_KEY ?? DEFAULT_ETHERSCAN_KEY,
+    chainId: 137,
     nativeAsset: "POL",
     usdRate: 0.45,
   },
   bsc: {
-    baseUrl: "https://api.bscscan.com/api",
-    apiKey: env.BSCSCAN_API_KEY,
+    baseUrl: ETHERSCAN_V2_BASE,
+    apiKey: env.BSCSCAN_API_KEY ?? DEFAULT_ETHERSCAN_KEY,
+    chainId: 56,
     nativeAsset: "BNB",
     usdRate: 580,
   },
   arbitrum: {
-    baseUrl: "https://api.arbiscan.io/api",
-    apiKey: env.ETHERSCAN_API_KEY,
+    baseUrl: ETHERSCAN_V2_BASE,
+    apiKey: env.ETHERSCAN_API_KEY ?? DEFAULT_ETHERSCAN_KEY,
+    chainId: 42161,
     nativeAsset: "ETH",
     usdRate: 3200,
   },
@@ -98,6 +113,8 @@ export class EtherscanProvider implements ChainProvider {
   private async request<T>(chain: Chain, params: Record<string, string>): Promise<T> {
     const config = this.getConfig(chain);
     const searchParams = new URLSearchParams(params);
+    // Etherscan V2 uses chainid to route across networks.
+    searchParams.set("chainid", String(config.chainId));
     if (config.apiKey) searchParams.set("apikey", config.apiKey);
 
     const url = `${config.baseUrl}?${searchParams.toString()}`;

@@ -8,7 +8,6 @@
  */
 import type { Chain } from "../../models/Investigation.model";
 import { CHAINS } from "../../models/Investigation.model";
-import { env } from "../../config/env";
 import { etherscanProvider } from "./etherscan.provider";
 import { createGraphSenseProvider } from "./graphsense.provider";
 import { syntheticProvider } from "./synthetic.provider";
@@ -36,15 +35,14 @@ export function getChainProvider(chain: Chain): ChainProvider {
   const live = graphsenseProvider();
   if (live && live.supports(chain)) return live;
 
-  // 2. Etherscan for EVM chains if API key configured (or live lookups available)
-  if (
-    etherscanProvider.supports(chain) &&
-    (env.hasEtherscan || env.hasPolygonscan || env.hasBscscan)
-  ) {
+  // 2. Etherscan V2 for EVM chains — always available thanks to the hardcoded
+  //    demo key. Environment overrides (ETHERSCAN_API_KEY etc.) take precedence
+  //    inside the provider config.
+  if (etherscanProvider.supports(chain)) {
     return etherscanProvider;
   }
 
-  // 3. Fallback to deterministic synthetic provider
+  // 3. Fallback to deterministic synthetic provider (non-EVM chains only)
   return syntheticProvider;
 }
 
@@ -56,9 +54,7 @@ export function isLiveProvider(chain: Chain): boolean {
 export async function providerStatus() {
   const liveGs = graphsenseProvider();
   const gsHealth = liveGs ? await liveGs.healthcheck() : { ok: false, detail: "Not configured" };
-  const esHealth = (env.hasEtherscan || env.hasPolygonscan || env.hasBscscan)
-    ? await etherscanProvider.healthcheck()
-    : { ok: false, detail: "No scan API keys configured" };
+  const esHealth = await etherscanProvider.healthcheck();
 
   return {
     graphsense: {
@@ -68,7 +64,9 @@ export async function providerStatus() {
       chains: CHAINS.filter((chain) => liveGs?.supports(chain) ?? false),
     },
     etherscan: {
-      configured: env.hasEtherscan || env.hasPolygonscan || env.hasBscscan,
+      // Always configured — server ships with a hardcoded demo key and env
+      // variables override it when present.
+      configured: true,
       reachable: esHealth.ok,
       ...(esHealth.detail ? { detail: esHealth.detail } : {}),
       chains: CHAINS.filter((chain) => etherscanProvider.supports(chain)),

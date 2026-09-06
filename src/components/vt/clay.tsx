@@ -4,7 +4,13 @@ import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import {
   Area,
   AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -200,7 +206,13 @@ export function RiskRing({
   const c = 2 * Math.PI * r;
   const pct = Math.min(100, Math.max(0, score));
   const band =
-    pct >= 75 ? "High risk" : pct >= 45 ? "Elevated" : "Low risk";
+    pct >= 81
+      ? "Critical risk"
+      : pct >= 61
+        ? "High risk"
+        : pct >= 31
+          ? "Elevated"
+          : "Low risk";
 
   return (
     <div className="flex flex-col items-center">
@@ -243,11 +255,13 @@ export function RiskRing({
           <span
             className={cn(
               "mt-0.5 text-[11px] font-semibold",
-              pct >= 75
+              pct >= 81
                 ? "text-critical"
-                : pct >= 45
-                  ? "text-warning"
-                  : "text-positive",
+                : pct >= 61
+                  ? "text-critical"
+                  : pct >= 31
+                    ? "text-warning"
+                    : "text-positive",
             )}
           >
             {band}
@@ -285,6 +299,7 @@ export function TrendChart({ data }: { data: TrendPoint[] }) {
           <YAxis
             tickLine={false}
             axisLine={false}
+            allowDecimals={false}
             tick={{ fill: "var(--muted-foreground)", fontSize: 11 }}
           />
           <Tooltip
@@ -294,12 +309,23 @@ export function TrendChart({ data }: { data: TrendPoint[] }) {
               borderRadius: 14,
               boxShadow: "var(--shadow-float)",
               fontSize: 12,
+              color: "var(--foreground)",
             }}
-            labelStyle={{ color: "var(--muted-foreground)" }}
+            labelStyle={{ color: "var(--foreground)" }}
+            itemStyle={{ color: "var(--foreground)" }}
+          />
+          <Legend
+            verticalAlign="top"
+            height={28}
+            iconType="circle"
+            formatter={(value) => (
+              <span className="text-[11px] text-foreground">{value}</span>
+            )}
           />
           <Area
             type="monotone"
             dataKey="completed"
+            name="Completed"
             stroke="var(--primary)"
             strokeWidth={2.5}
             fill="url(#areaCompleted)"
@@ -307,11 +333,163 @@ export function TrendChart({ data }: { data: TrendPoint[] }) {
           <Area
             type="monotone"
             dataKey="ongoing"
+            name="Active"
             stroke="var(--intel)"
             strokeWidth={2.5}
             fill="url(#areaOngoing)"
           />
         </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+export type PieSlice = { name: string; value: number; color: string };
+
+const PIE_PALETTE = [
+  "var(--primary)",
+  "var(--intel)",
+  "var(--teal)",
+  "var(--warning)",
+  "var(--critical)",
+  "var(--positive)",
+  "#5c667a",
+];
+
+function PieChartTooltip({
+  active,
+  payload,
+  total,
+}: {
+  active?: boolean;
+  payload?: Array<{ name?: string; value?: number; payload?: PieSlice }>;
+  total: number;
+}) {
+  if (!active || !payload?.length) return null;
+  const item = payload[0];
+  const value = Number(item?.value ?? 0);
+  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+  return (
+    <div className="rounded-xl border border-border-strong bg-popover px-3 py-2 text-xs shadow-lg">
+      <p className="font-medium text-foreground">{item?.name}</p>
+      <p className="mt-0.5 text-muted-foreground">
+        {value} · {pct}%
+      </p>
+    </div>
+  );
+}
+
+export function DistributionPieChart({
+  data,
+  emptyLabel = "No data yet",
+}: {
+  data: PieSlice[];
+  emptyLabel?: string;
+}) {
+  const total = data.reduce((acc, d) => acc + d.value, 0);
+  if (total === 0) {
+    return (
+      <div className="flex h-[200px] items-center justify-center text-xs text-muted-foreground">
+        {emptyLabel}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-[200px] w-full items-center gap-4">
+      <div className="h-full min-w-0 flex-1">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie
+              data={data}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius={44}
+              outerRadius={68}
+              paddingAngle={2}
+              stroke="var(--background)"
+              strokeWidth={2}
+            >
+              {data.map((entry, i) => (
+                <Cell key={entry.name} fill={entry.color || PIE_PALETTE[i % PIE_PALETTE.length]} />
+              ))}
+            </Pie>
+            <Tooltip content={<PieChartTooltip total={total} />} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <ul className="max-h-[180px] shrink-0 space-y-2 overflow-y-auto pr-1 text-[11px]">
+        {data.map((entry) => {
+          const pct = Math.round((entry.value / total) * 100);
+          return (
+            <li key={entry.name} className="flex items-start gap-2 leading-tight">
+              <span
+                className="mt-0.5 size-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: entry.color }}
+                aria-hidden
+              />
+              <div className="min-w-0">
+                <p className="font-medium text-foreground">{entry.name}</p>
+                <p className="text-muted-foreground tabular-nums">
+                  {entry.value} · {pct}%
+                </p>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+export function SimpleBarChart({
+  data,
+  dataKey = "count",
+  emptyLabel = "No data yet",
+}: {
+  data: Array<{ label: string; count: number }>;
+  dataKey?: string;
+  emptyLabel?: string;
+}) {
+  if (data.every((d) => d.count === 0)) {
+    return (
+      <div className="flex h-[180px] items-center justify-center text-xs text-muted-foreground">
+        {emptyLabel}
+      </div>
+    );
+  }
+  return (
+    <div className="h-[180px] w-full">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: -18 }}>
+          <CartesianGrid stroke="var(--border)" vertical={false} />
+          <XAxis
+            dataKey="label"
+            tickLine={false}
+            axisLine={false}
+            tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
+          />
+          <YAxis
+            allowDecimals={false}
+            tickLine={false}
+            axisLine={false}
+            tick={{ fill: "var(--muted-foreground)", fontSize: 10 }}
+          />
+          <Tooltip
+            contentStyle={{
+              background: "var(--popover)",
+              border: "1px solid var(--border-strong)",
+              borderRadius: 14,
+              fontSize: 12,
+              color: "var(--foreground)",
+            }}
+            labelStyle={{ color: "var(--foreground)" }}
+            itemStyle={{ color: "var(--foreground)" }}
+          />
+          <Bar dataKey={dataKey} fill="var(--intel)" radius={[6, 6, 0, 0]} />
+        </BarChart>
       </ResponsiveContainer>
     </div>
   );

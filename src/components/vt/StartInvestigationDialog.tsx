@@ -1,11 +1,11 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { z } from "zod";
 import { toast } from "sonner";
-import { Radar, CheckCircle2, Loader2, Circle } from "lucide-react";
+import { Radar, CheckCircle2, Loader2, Circle, AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -27,7 +27,8 @@ import {
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Slider } from "@/components/ui/slider";
+import { TraceDepthSelect } from "@/components/vt/TraceDepthSelect";
+import { DEFAULT_TRACE_DEPTH, MAX_TRACE_DEPTH } from "@/lib/domain";
 import {
   Select,
   SelectContent,
@@ -41,9 +42,15 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { Progress } from "@/components/ui/progress";
 import { casesQuery, createInvestigation } from "@/lib/api/queries";
 import { BLOCKCHAINS } from "@/lib/domain";
 import { useUIStore } from "@/stores/ui";
+import {
+  PIPELINE_STAGES,
+  runInvestigationPipeline,
+  type PipelineProgress,
+} from "@/services/investigationPipeline";
 
 const schema = z.object({
   case_id: z.string().uuid("Select the case this investigation belongs to."),
@@ -54,7 +61,7 @@ const schema = z.object({
     .trim()
     .regex(/^0x[a-fA-F0-9]{40}$/, "Enter a valid EVM address (0x + 40 hex chars)."),
   blockchain: z.string().min(1),
-  trace_depth: z.number().min(1).max(6),
+  trace_depth: z.number().min(1).max(MAX_TRACE_DEPTH),
   window_start: z.string().optional(),
   window_end: z.string().optional(),
   min_value: z.string().optional(),
@@ -62,50 +69,20 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
-/* ---------- Analysis Progress Stepper ---------- */
-
-const PIPELINE_STEPS = [
-  { key: "validate", label: "Target Address Validated" },
-  { key: "connect", label: "Blockchain Connected" },
-  { key: "retrieve", label: "Retrieving On-Chain Transactions" },
-  { key: "normalize", label: "Normalizing Data" },
-  { key: "graph", label: "Constructing Bounded Graph" },
-  { key: "correlate", label: "Correlating Entities" },
-  { key: "findings", label: "Generating Findings" },
-] as const;
-
-type StepStatus = "pending" | "active" | "done";
+type StepStatus = "pending" | "active" | "done" | "failed";
 
 function AnalysisProgressStepper({
-  onComplete,
+  progress,
   investigationRef,
+  failed,
 }: {
-  onComplete: () => void;
+  progress: PipelineProgress | null;
   investigationRef: string;
+  failed?: boolean;
 }) {
-  const [stepIndex, setStepIndex] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const delays = [400, 600, 1800, 800, 1200, 900, 700];
-    let current = 0;
-
-    function advance() {
-      current++;
-      if (current < PIPELINE_STEPS.length) {
-        setStepIndex(current);
-        timerRef.current = setTimeout(advance, delays[current] ?? 800);
-      } else {
-        setStepIndex(PIPELINE_STEPS.length);
-        timerRef.current = setTimeout(onComplete, 600);
-      }
-    }
-
-    timerRef.current = setTimeout(advance, delays[0] ?? 500);
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [onComplete]);
+  const activeIndex = progress
+    ? PIPELINE_STAGES.findIndex((s) => s.key === progress.stage)
+    : 0;
 
   return (
     <div className="space-y-5">
@@ -114,15 +91,20 @@ function AnalysisProgressStepper({
           {investigationRef} — Live Analysis Pipeline
         </p>
         <p className="text-xs text-muted-foreground">
-          Ingesting real on-chain data and constructing bounded investigation graph
+          {progress?.note ?? "Initializing real on-chain investigation…"}
         </p>
       </div>
 
+      {progress && (
+        <Progress value={progress.progress} className="h-1.5" />
+      )}
+
       <div className="space-y-2.5 py-2">
-        {PIPELINE_STEPS.map((step, i) => {
+        {PIPELINE_STAGES.filter((s) => s.key !== "ready").map((step, i) => {
           let status: StepStatus = "pending";
-          if (i < stepIndex) status = "done";
-          else if (i === stepIndex) status = "active";
+          if (failed && i === activeIndex) status = "failed";
+          else if (i < activeIndex) status = "done";
+          else if (i === activeIndex) status = "active";
 
           return (
             <div
@@ -132,13 +114,17 @@ function AnalysisProgressStepper({
                   ? "bg-emerald-500/10 border border-emerald-500/20"
                   : status === "active"
                     ? "bg-primary/10 border border-primary/30"
-                    : "bg-secondary/30 border border-transparent"
+                    : status === "failed"
+                      ? "bg-destructive/10 border border-destructive/30"
+                      : "bg-secondary/30 border border-transparent"
               }`}
             >
               {status === "done" ? (
                 <CheckCircle2 className="size-4 text-emerald-400 shrink-0" />
               ) : status === "active" ? (
                 <Loader2 className="size-4 text-primary animate-spin shrink-0" />
+              ) : status === "failed" ? (
+                <AlertTriangle className="size-4 text-destructive shrink-0" />
               ) : (
                 <Circle className="size-4 text-muted-foreground/40 shrink-0" />
               )}
@@ -148,7 +134,9 @@ function AnalysisProgressStepper({
                     ? "text-emerald-400"
                     : status === "active"
                       ? "text-foreground"
-                      : "text-muted-foreground/60"
+                      : status === "failed"
+                        ? "text-destructive"
+                        : "text-muted-foreground/60"
                 }`}
               >
                 {step.label}
@@ -158,18 +146,16 @@ function AnalysisProgressStepper({
         })}
       </div>
 
-      {stepIndex >= PIPELINE_STEPS.length && (
+      {progress?.stage === "ready" && (
         <div className="text-center">
           <p className="text-xs text-emerald-400 font-semibold animate-pulse">
-            ✓ Analysis pipeline complete — opening workspace…
+            ✓ Real on-chain analysis complete — opening workspace…
           </p>
         </div>
       )}
     </div>
   );
 }
-
-/* ---------- Main Dialog ---------- */
 
 export function StartInvestigationDialog({
   presetCaseId,
@@ -186,7 +172,9 @@ export function StartInvestigationDialog({
     active: boolean;
     investigationId: string;
     investigationRef: string;
+    failed: boolean;
   } | null>(null);
+  const [pipelineProgress, setPipelineProgress] = useState<PipelineProgress | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -196,7 +184,7 @@ export function StartInvestigationDialog({
       description: "",
       target_address: "",
       blockchain: "ethereum",
-      trace_depth: 3,
+      trace_depth: DEFAULT_TRACE_DEPTH,
       window_start: "",
       window_end: "",
       min_value: "",
@@ -207,20 +195,23 @@ export function StartInvestigationDialog({
     if (open && presetCaseId) form.setValue("case_id", presetCaseId);
   }, [open, presetCaseId, form]);
 
-  const handleAnalysisComplete = useCallback(() => {
-    if (!analysisState) return;
-    setAnalysisState(null);
-    setOpen(false);
-    form.reset();
-    void navigate({
-      to: "/investigations/$investigationId",
-      params: { investigationId: analysisState.investigationId },
-    });
-  }, [analysisState, setOpen, form, navigate]);
+  const navigateToWorkspace = useCallback(
+    (investigationId: string) => {
+      setAnalysisState(null);
+      setPipelineProgress(null);
+      setOpen(false);
+      form.reset();
+      void navigate({
+        to: "/investigations/$investigationId/$tab",
+        params: { investigationId, tab: "graph" },
+      });
+    },
+    [setOpen, form, navigate],
+  );
 
   const mutation = useMutation({
-    mutationFn: (values: FormValues) =>
-      createInvestigation({
+    mutationFn: async (values: FormValues) => {
+      const created = await createInvestigation({
         case_id: values.case_id,
         name: values.name,
         description: values.description || undefined,
@@ -234,28 +225,51 @@ export function StartInvestigationDialog({
           ? new Date(values.window_end).toISOString()
           : null,
         min_value: values.min_value ? Number(values.min_value) : null,
-      }),
-    onSuccess: (created) => {
-      void queryClient.invalidateQueries({ queryKey: ["investigations"] });
-      toast.success(`${created.investigation_ref} queued — starting live analysis`);
+        status: "queued",
+      });
+
       setAnalysisState({
         active: true,
         investigationId: created.id,
         investigationRef: created.investigation_ref,
+        failed: false,
       });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
 
-  const depth = form.watch("trace_depth");
+      let openedGraph = false;
+      await runInvestigationPipeline(created, {
+        onProgress: (p) => setPipelineProgress(p),
+        onGraphProgress: (snapshot) => {
+          if (!openedGraph && snapshot.nodeCount > 0) {
+            openedGraph = true;
+            setOpen(false);
+            void navigate({
+              to: "/investigations/$investigationId/$tab",
+              params: { investigationId: created.id, tab: "graph" },
+            });
+          }
+        },
+      });
+      return created;
+    },
+    onSuccess: (created) => {
+      void queryClient.invalidateQueries({ queryKey: ["investigations"] });
+      toast.success(`${created.investigation_ref} — live on-chain trace complete`);
+      setTimeout(() => navigateToWorkspace(created.id), 800);
+    },
+    onError: (error: Error) => {
+      setAnalysisState((prev) => (prev ? { ...prev, failed: true } : prev));
+      toast.error(error.message);
+    },
+  });
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!analysisState) setOpen(v); }}>
       <DialogContent className="sm:max-w-xl">
         {analysisState ? (
           <AnalysisProgressStepper
+            progress={pipelineProgress}
             investigationRef={analysisState.investigationRef}
-            onComplete={handleAnalysisComplete}
+            failed={analysisState.failed}
           />
         ) : (
           <>
@@ -265,8 +279,9 @@ export function StartInvestigationDialog({
                 Start an investigation
               </DialogTitle>
               <DialogDescription>
-                The trace is bounded by hop depth, time window and value threshold so
-                the investigation graph stays interpretable.
+                Real on-chain trace bounded by hop depth, time window and value
+                threshold. The pipeline fetches live transactions, builds the
+                graph, ranks fund-flow paths, and correlates entity intelligence.
               </DialogDescription>
             </DialogHeader>
 
@@ -314,7 +329,7 @@ export function StartInvestigationDialog({
                         />
                       </FormControl>
                       <FormDescription>
-                        The EVM address to trace — this becomes the root of the bounded graph.
+                        Real EVM address — becomes the root of the bounded investigation graph.
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -366,7 +381,7 @@ export function StartInvestigationDialog({
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
-                            {BLOCKCHAINS.map((b) => (
+                            {BLOCKCHAINS.filter((b) => b.supported).map((b) => (
                               <SelectItem key={b.id} value={b.id}>
                                 {b.label}
                               </SelectItem>
@@ -381,19 +396,13 @@ export function StartInvestigationDialog({
                     name="trace_depth"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Trace depth — {depth} hops</FormLabel>
+                        <FormLabel>Trace depth</FormLabel>
                         <FormControl>
-                          <Slider
-                            min={1}
-                            max={6}
-                            step={1}
-                            value={[field.value]}
-                            onValueChange={([v]) => field.onChange(v)}
+                          <TraceDepthSelect
+                            value={field.value}
+                            onChange={field.onChange}
                           />
                         </FormControl>
-                        <FormDescription>
-                          Deeper traces cover more hops but take longer.
-                        </FormDescription>
                       </FormItem>
                     )}
                   />
@@ -436,7 +445,7 @@ export function StartInvestigationDialog({
                         name="min_value"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Minimum transaction value</FormLabel>
+                            <FormLabel>Minimum transaction value (USD)</FormLabel>
                             <FormControl>
                               <Input
                                 className="mono"
@@ -446,7 +455,7 @@ export function StartInvestigationDialog({
                               />
                             </FormControl>
                             <FormDescription>
-                              Filters dust and decoy transfers out of the graph.
+                              Filters dust and decoy transfers from the graph.
                             </FormDescription>
                           </FormItem>
                         )}
@@ -464,7 +473,7 @@ export function StartInvestigationDialog({
                     Cancel
                   </Button>
                   <Button type="submit" disabled={mutation.isPending}>
-                    {mutation.isPending ? "Queueing…" : "Queue trace"}
+                    {mutation.isPending ? "Running live trace…" : "Begin Analysis →"}
                   </Button>
                 </DialogFooter>
               </form>

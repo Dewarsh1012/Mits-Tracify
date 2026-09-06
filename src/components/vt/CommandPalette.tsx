@@ -79,13 +79,9 @@ export function CommandPalette() {
             <FolderOpen className="size-4" />
             Cases
           </CommandItem>
-          <CommandItem onSelect={() => run(() => navigate({ to: "/findings" }))}>
-            <ShieldAlert className="size-4" />
-            Findings
-          </CommandItem>
           <CommandItem onSelect={() => run(() => navigate({ to: "/evidence" }))}>
             <Vault className="size-4" />
-            Evidence vault
+            Evidence
           </CommandItem>
           <CommandItem onSelect={() => run(() => navigate({ to: "/reports" }))}>
             <FileText className="size-4" />
@@ -132,8 +128,8 @@ export function CommandPalette() {
                   onSelect={() =>
                     run(() =>
                       navigate({
-                        to: "/investigations/$investigationId",
-                        params: { investigationId: inv.id },
+                        to: "/investigations/$investigationId/$tab",
+                        params: { investigationId: inv.id, tab: "overview" },
                       }),
                     )
                   }

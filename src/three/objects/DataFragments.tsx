@@ -133,7 +133,7 @@ export function WorldNumber({
           ref={b}
           position={[0, -size * 0.72, 0]}
           fontSize={size * 0.16}
-          color="#6e8cff"
+          color="#38bdf8"
           letterSpacing={0.35}
           anchorX="center"
           anchorY="middle"

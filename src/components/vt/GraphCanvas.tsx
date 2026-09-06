@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, useCallback, useRef, useEffect, type PointerEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   ZoomIn,
@@ -15,6 +15,13 @@ import {
 import { cn } from "@/lib/utils";
 import { truncateAddress } from "@/lib/domain";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type {
   GraphEdge,
   GraphNode,
@@ -24,12 +31,12 @@ import type {
 } from "@/services/intelligence";
 
 const KIND_STYLE: Record<NodeKind, { fill: string; stroke: string; glow?: string }> = {
-  target: { fill: "var(--critical)", stroke: "var(--critical)", glow: "rgba(255, 92, 108, 0.4)" },
+  target: { fill: "var(--critical)", stroke: "var(--critical)", glow: "rgba(248, 113, 113, 0.38)" },
   wallet: { fill: "var(--elevated)", stroke: "var(--border-strong)" },
   intermediary: { fill: "var(--elevated)", stroke: "var(--border-strong)" },
-  candidate_entity: { fill: "var(--elevated)", stroke: "var(--warning)", glow: "rgba(255, 184, 77, 0.3)" },
-  vasp: { fill: "var(--elevated)", stroke: "var(--positive)", glow: "rgba(61, 220, 151, 0.35)" },
-  bridge: { fill: "var(--elevated)", stroke: "var(--intel)", glow: "rgba(139, 124, 255, 0.35)" },
+  candidate_entity: { fill: "var(--elevated)", stroke: "var(--warning)", glow: "rgba(251, 191, 36, 0.28)" },
+  vasp: { fill: "var(--elevated)", stroke: "var(--positive)", glow: "rgba(52, 211, 153, 0.32)" },
+  bridge: { fill: "var(--elevated)", stroke: "var(--intel)", glow: "rgba(129, 140, 248, 0.32)" },
 };
 
 export const NODE_KIND_LABEL: Record<NodeKind, string> = {
@@ -41,6 +48,8 @@ export const NODE_KIND_LABEL: Record<NodeKind, string> = {
   bridge: "Bridge contract",
 };
 
+export const GRAPH_VIEWBOX = { width: 1280, height: 720 } as const;
+
 export function GraphCanvas({
   graph,
   paths,
@@ -50,7 +59,10 @@ export function GraphCanvas({
   maxTimeSeconds = Infinity,
   onSelectNode,
   onSelectEdge,
+  onFocusPath,
   onToggleFocus,
+  building = false,
+  latestNodeId = null,
 }: {
   graph: InvestigationGraph;
   paths: TracePath[];
@@ -60,17 +72,88 @@ export function GraphCanvas({
   maxTimeSeconds?: number;
   onSelectNode: (node: GraphNode) => void;
   onSelectEdge: (edge: GraphEdge) => void;
+  onFocusPath?: (pathId: string | null) => void;
   onToggleFocus?: () => void;
+  /** Live-build mode: animate nodes as they are discovered one at a time. */
+  building?: boolean;
+  latestNodeId?: string | null;
 }) {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isNoiseFiltered, setIsNoiseFiltered] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const dragRef = useRef<{ active: boolean; startX: number; startY: number; panX: number; panY: number }>({
+    active: false,
+    startX: 0,
+    startY: 0,
+    panX: 0,
+    panY: 0,
+  });
 
   const focusedNodeIds = useMemo(() => {
     if (!focusedPath) return null;
     const path = paths.find((p) => p.id === focusedPath);
     return path ? new Set(path.nodeIds) : null;
   }, [focusedPath, paths]);
+
+  const focusedEdgeIds = useMemo(() => {
+    if (!focusedPath) return null;
+    const path = paths.find((p) => p.id === focusedPath);
+    if (!path) return null;
+    const ids = new Set<string>();
+    for (let i = 0; i < path.nodeIds.length - 1; i++) {
+      const fromId = path.nodeIds[i]!;
+      const toId = path.nodeIds[i + 1]!;
+      const edge = graph.edges.find((e) => e.from === fromId && e.to === toId);
+      if (edge) ids.add(edge.id);
+    }
+    return ids;
+  }, [focusedPath, paths, graph.edges]);
+
+  const layoutNodes = useMemo(() => {
+    if (!focusedNodeIds) return graph.nodes;
+    const focused = graph.nodes.filter((n) => focusedNodeIds.has(n.id));
+    return focused.length > 0 ? focused : graph.nodes;
+  }, [graph.nodes, focusedNodeIds]);
+
+  const viewBoxMetrics = useMemo(() => {
+    const pad = focusedPath ? 72 : 100;
+    if (layoutNodes.length === 0) {
+      return {
+        minX: 0,
+        minY: 0,
+        width: GRAPH_VIEWBOX.width,
+        height: GRAPH_VIEWBOX.height,
+      };
+    }
+    const xs = layoutNodes.map((n) => n.x);
+    const ys = layoutNodes.map((n) => n.y);
+    const minX = Math.min(...xs) - pad;
+    const maxX = Math.max(...xs) + pad;
+    const minY = Math.min(...ys) - pad;
+    const maxY = Math.max(...ys) + pad;
+    return {
+      minX,
+      minY,
+      width: Math.max(maxX - minX, 320),
+      height: Math.max(maxY - minY, 280),
+    };
+  }, [layoutNodes, focusedPath]);
+
+  const viewBox = `${viewBoxMetrics.minX} ${viewBoxMetrics.minY} ${viewBoxMetrics.width} ${viewBoxMetrics.height}`;
+
+  const hopLevels = useMemo(() => {
+    const hops = [...new Set(graph.nodes.map((n) => n.hop))].sort((a, b) => a - b);
+    return hops.map((hop) => {
+      const anchor = graph.nodes.find((n) => n.hop === hop);
+      return { hop, x: anchor?.x ?? 0 };
+    });
+  }, [graph.nodes]);
+
+  useEffect(() => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }, [viewBox]);
 
   const dim = (id: string) => Boolean(focusedNodeIds && !focusedNodeIds.has(id));
 
@@ -81,8 +164,40 @@ export function GraphCanvas({
     setPan({ x: 0, y: 0 });
   };
 
+  const handlePointerDown = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    dragRef.current = {
+      active: true,
+      startX: event.clientX,
+      startY: event.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [pan.x, pan.y]);
+
+  const handlePointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current.active) return;
+    setPan({
+      x: dragRef.current.panX + (event.clientX - dragRef.current.startX),
+      y: dragRef.current.panY + (event.clientY - dragRef.current.startY),
+    });
+  }, []);
+
+  const handlePointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    dragRef.current.active = false;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+
+  const canvasShellClass = cn(
+    "canvas-grid relative w-full overflow-hidden rounded-xl border border-border bg-workspace select-none",
+    fullscreen
+      ? "fixed inset-0 z-50 h-screen rounded-none border-0"
+      : "h-full min-h-[min(780px,72vh)]",
+  );
+
   return (
-    <div className="canvas-grid relative h-[520px] w-full overflow-hidden rounded-xl border border-border bg-workspace select-none">
+    <div className={canvasShellClass}>
       {/* Floating Graph Controls (Top Left & Bottom Left - Blueprint Page 104) */}
       <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
         <div className="flex items-center gap-1 rounded-lg border border-border/80 bg-surface/85 p-1 backdrop-blur-md shadow-lg">
@@ -113,6 +228,15 @@ export function GraphCanvas({
           >
             <RotateCcw className="size-3.5 text-muted-foreground hover:text-foreground" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 rounded"
+            onClick={() => setFullscreen((f) => !f)}
+            title={fullscreen ? "Exit fullscreen" : "Fullscreen canvas"}
+          >
+            <Maximize2 className="size-3.5 text-muted-foreground hover:text-foreground" />
+          </Button>
         </div>
 
         {/* Noise Filter Toggle Button */}
@@ -126,29 +250,67 @@ export function GraphCanvas({
           {isNoiseFiltered ? "Noise Suppressed" : "Filter Low Value"}
         </Button>
 
-        {/* Focus Mode Indicator */}
+        {/* Path focus selector */}
+        {paths.length > 0 && onFocusPath && (
+          <Select
+            value={focusedPath ?? "__all__"}
+            onValueChange={(value) => onFocusPath(value === "__all__" ? null : value)}
+          >
+            <SelectTrigger
+              className="h-8 w-[min(220px,42vw)] border-border/80 bg-surface/85 text-xs backdrop-blur-md shadow-md"
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <Eye className="mr-1.5 size-3 shrink-0 text-muted-foreground" />
+              <SelectValue placeholder="Focus path" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All paths</SelectItem>
+              {paths.map((p, idx) => (
+                <SelectItem key={p.id} value={p.id}>
+                  #{String(idx + 1).padStart(2, "0")} · {p.label} · {(p.continuity * 100).toFixed(0)}%
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Focus mode clear */}
         {focusedPath && (
           <Button
             variant="secondary"
             size="sm"
             className="h-8 text-xs gap-1.5 border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 backdrop-blur-md"
-            onClick={onToggleFocus}
+            onClick={onToggleFocus ?? (() => onFocusPath?.(null))}
           >
             <Eye className="size-3" />
-            Path Focus Active
+            Clear focus
           </Button>
+        )}
+        {building && (
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-300 backdrop-blur-md">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+            </span>
+            Building graph · {graph.nodes.length} node{graph.nodes.length === 1 ? "" : "s"}
+          </span>
         )}
       </div>
 
       {/* Main SVG Graph Surface */}
       <motion.div
-        className="h-full w-full cursor-grab active:cursor-grabbing flex items-center justify-center"
+        className="h-full w-full cursor-grab active:cursor-grabbing touch-none"
         animate={{ scale: zoom, x: pan.x, y: pan.y }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
       >
         <svg
-          viewBox="0 0 1000 420"
-          className="h-full w-full max-w-[1000px] overflow-visible"
+          viewBox={viewBox}
+          className="h-full w-full overflow-visible"
+          preserveAspectRatio="xMidYMid meet"
           role="img"
           aria-label="Bounded investigation graph of traced fund movement"
         >
@@ -186,32 +348,28 @@ export function GraphCanvas({
           </defs>
 
           {/* Hop guide rails */}
-          {Array.from({ length: graph.bounds.hops + 1 }).map((_, hop) => {
-            const node = graph.nodes.find((n) => n.hop === hop);
-            if (!node) return null;
-            return (
-              <g key={`hop-${hop}`}>
-                <line
-                  x1={node.x}
-                  y1={16}
-                  x2={node.x}
-                  y2={404}
-                  stroke="var(--border)"
-                  strokeDasharray="2 6"
-                />
-                <text
-                  x={node.x}
-                  y={12}
-                  textAnchor="middle"
-                  className="mono"
-                  fontSize="9"
-                  fill="var(--muted-foreground)"
-                >
-                  {hop === 0 ? "TARGET ROOT" : `HOP ${hop}`}
-                </text>
-              </g>
-            );
-          })}
+          {hopLevels.map(({ hop, x }) => (
+            <g key={`hop-${hop}`}>
+              <line
+                x1={x}
+                y1={viewBoxMetrics.minY + 24}
+                x2={x}
+                y2={viewBoxMetrics.minY + viewBoxMetrics.height - 16}
+                stroke="var(--border)"
+                strokeDasharray="2 6"
+              />
+              <text
+                x={x}
+                y={viewBoxMetrics.minY + 12}
+                textAnchor="middle"
+                className="mono"
+                fontSize="9"
+                fill="var(--muted-foreground)"
+              >
+                {hop === 0 ? "TARGET ROOT" : `HOP ${hop}`}
+              </text>
+            </g>
+          ))}
 
           {/* Edges */}
           {graph.edges.map((edge) => {
@@ -223,16 +381,20 @@ export function GraphCanvas({
             if (isNoiseFiltered && edge.continuity < 0.35) return null;
 
             const isPathActive = Boolean(
-              focusedPath && edge.pathIds && edge.pathIds.includes(focusedPath)
+              focusedEdgeIds?.has(edge.id) ||
+                (focusedPath && edge.pathIds && edge.pathIds.includes(focusedPath)),
             );
             const faded = dim(from.id) || dim(to.id);
             const mid = (from.x + to.x) / 2;
 
             return (
-              <g
+              <motion.g
                 key={edge.id}
+                initial={building ? { opacity: 0 } : false}
+                animate={{ opacity: faded ? 0.12 : isPathActive ? 1 : 0.85 }}
+                transition={{ duration: building ? 0.35 : 0.2 }}
                 className="cursor-pointer group"
-                opacity={faded ? 0.12 : isPathActive ? 1 : 0.85}
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => onSelectEdge(edge)}
               >
                 {/* Hit area line */}
@@ -284,7 +446,7 @@ export function GraphCanvas({
                     {edge.value}
                   </text>
                 </g>
-              </g>
+              </motion.g>
             );
           })}
 
@@ -295,14 +457,29 @@ export function GraphCanvas({
             const isTarget = node.kind === "target";
             const isVasp = node.kind === "vasp" || node.kind === "candidate_entity";
             const isFaded = dim(node.id);
+            const isLatest = building && latestNodeId === node.id;
 
             return (
               <motion.g
                 key={node.id}
-                initial={{ opacity: 0, scale: 0.85 }}
-                animate={{ opacity: isFaded ? 0.18 : 1, scale: 1 }}
-                transition={{ delay: i * 0.02, duration: 0.25 }}
+                initial={
+                  building
+                    ? { opacity: 0, scale: 0.2 }
+                    : { opacity: 0, scale: 0.85 }
+                }
+                animate={{
+                  opacity: isFaded ? 0.18 : 1,
+                  scale: isLatest ? [1, 1.12, 1] : 1,
+                }}
+                transition={
+                  isLatest
+                    ? { type: "spring", stiffness: 380, damping: 20, duration: 0.55 }
+                    : building
+                      ? { duration: 0.25 }
+                      : { delay: i * 0.02, duration: 0.25 }
+                }
                 className="cursor-pointer group"
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => onSelectNode(node)}
               >
                 {/* Ambient Radial Glow for Target & VASP endpoints (Page 103) */}
@@ -321,6 +498,19 @@ export function GraphCanvas({
                     cy={node.y}
                     r={36}
                     fill="url(#vasp-glow)"
+                  />
+                )}
+
+                {isLatest && (
+                  <circle
+                    cx={node.x}
+                    cy={node.y}
+                    r={isTarget ? 36 : 28}
+                    fill="none"
+                    stroke="var(--primary)"
+                    strokeWidth={2}
+                    opacity={0.7}
+                    className="animate-pulse"
                   />
                 )}
 

@@ -5,9 +5,9 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * TRACIFY design system — Claymorphism intelligence surface.
- * Soft 3D layered clay panels, deep navy base, indigo/violet/teal accents.
- * All colour, elevation and typography live here as semantic tokens.
+ * TRACIFY design system — Obsidian Signal (dark-only).
+ * Deep charcoal slate base, cyan signal accents, soft violet intel highlights.
+ * Clay panels with crisp elevation and readable muted text.
  */
 
 @theme inline {
@@ -69,12 +69,12 @@
   --color-chart-5: var(--critical);
 
   --shadow-clay:
-    0 18px 40px -18px oklch(0 0 0 / 0.75), 0 2px 0 0 oklch(1 0 0 / 0.05) inset,
-    0 -14px 24px -18px oklch(0 0 0 / 0.5) inset;
+    0 20px 44px -20px oklch(0 0 0 / 0.82), 0 1px 0 0 oklch(1 0 0 / 0.06) inset,
+    0 -12px 20px -16px oklch(0 0 0 / 0.55) inset;
   --shadow-clay-lift:
-    0 30px 60px -22px oklch(0 0 0 / 0.85), 0 2px 0 0 oklch(1 0 0 / 0.07) inset;
-  --shadow-float: 0 34px 70px -26px oklch(0 0 0 / 0.9);
-  --shadow-focus: 0 0 0 1px var(--primary), 0 0 30px -6px var(--primary-glow);
+    0 32px 64px -24px oklch(0 0 0 / 0.88), 0 1px 0 0 oklch(1 0 0 / 0.08) inset;
+  --shadow-float: 0 36px 72px -28px oklch(0 0 0 / 0.92);
+  --shadow-focus: 0 0 0 1px var(--primary), 0 0 28px -4px var(--primary-glow);
 
   --spacing-rail: 84px;
   --spacing-sidebar: 268px;
@@ -84,66 +84,69 @@
 :root {
   --radius: 1rem;
 
-  --background: oklch(0.1509 0.0175 265);
-  --workspace: oklch(0.1861 0.0198 265);
-  --surface: oklch(0.2183 0.0231 264);
-  --elevated: oklch(0.2564 0.0252 263);
+  /* Surfaces — layered charcoal slate */
+  --background: oklch(0.118 0.014 248);
+  --workspace: oklch(0.142 0.016 247);
+  --surface: oklch(0.168 0.018 246);
+  --elevated: oklch(0.198 0.02 245);
 
-  --foreground: oklch(0.9276 0.0058 264);
-  --muted: oklch(0.2183 0.0231 264);
-  --muted-foreground: oklch(0.7118 0.0208 264);
+  --foreground: oklch(0.94 0.008 248);
+  --muted: oklch(0.168 0.018 246);
+  --muted-foreground: oklch(0.64 0.02 248);
 
-  --card: oklch(0.2183 0.0231 264);
-  --card-foreground: oklch(0.9276 0.0058 264);
-  --popover: oklch(0.2564 0.0252 263);
-  --popover-foreground: oklch(0.9276 0.0058 264);
+  --card: oklch(0.168 0.018 246);
+  --card-foreground: oklch(0.94 0.008 248);
+  --popover: oklch(0.198 0.02 245);
+  --popover-foreground: oklch(0.94 0.008 248);
 
-  --primary: oklch(0.5854 0.2041 277.12);
-  --primary-foreground: oklch(0.98 0.005 277);
-  --primary-glow: oklch(0.5854 0.2041 277.12 / 0.65);
+  /* Signal cyan — primary action & trace highlights */
+  --primary: oklch(0.72 0.145 200);
+  --primary-foreground: oklch(0.13 0.02 200);
+  --primary-glow: oklch(0.72 0.145 200 / 0.5);
 
-  --intel: oklch(0.6268 0.2325 303.9);
-  --intel-foreground: oklch(0.98 0.005 304);
-  --teal: oklch(0.7889 0.1341 197.65);
+  /* Intel violet — AI / attribution context */
+  --intel: oklch(0.62 0.14 278);
+  --intel-foreground: oklch(0.97 0.008 278);
+  --teal: oklch(0.76 0.11 175);
 
-  --secondary: oklch(0.2564 0.0252 263);
-  --secondary-foreground: oklch(0.9276 0.0058 264);
-  --accent: oklch(0.2564 0.0252 263);
-  --accent-foreground: oklch(0.9276 0.0058 264);
+  --secondary: oklch(0.198 0.02 245);
+  --secondary-foreground: oklch(0.94 0.008 248);
+  --accent: oklch(0.22 0.022 244);
+  --accent-foreground: oklch(0.94 0.008 248);
 
-  --critical: oklch(0.6368 0.2078 25.33);
-  --critical-foreground: oklch(0.98 0.01 25);
-  --destructive: oklch(0.6368 0.2078 25.33);
-  --destructive-foreground: oklch(0.98 0.01 25);
-  --warning: oklch(0.7686 0.1647 70.08);
-  --warning-foreground: oklch(0.18 0.03 70);
-  --positive: oklch(0.7227 0.192 149.58);
-  --positive-foreground: oklch(0.17 0.04 150);
+  --critical: oklch(0.64 0.19 22);
+  --critical-foreground: oklch(0.98 0.01 22);
+  --destructive: oklch(0.64 0.19 22);
+  --destructive-foreground: oklch(0.98 0.01 22);
+  --warning: oklch(0.76 0.13 68);
+  --warning-foreground: oklch(0.16 0.03 68);
+  --positive: oklch(0.72 0.14 155);
+  --positive-foreground: oklch(0.14 0.04 155);
 
-  --border: oklch(1 0 0 / 7%);
-  --border-strong: oklch(1 0 0 / 13%);
-  --hairline: oklch(1 0 0 / 6%);
-  --input: oklch(1 0 0 / 10%);
-  --ring: oklch(0.5854 0.2041 277.12 / 0.7);
+  --border: oklch(1 0 0 / 9%);
+  --border-strong: oklch(1 0 0 / 16%);
+  --hairline: oklch(1 0 0 / 7%);
+  --input: oklch(1 0 0 / 11%);
+  --ring: oklch(0.72 0.145 200 / 0.65);
 
-  --sidebar: oklch(0.1861 0.0198 265);
-  --sidebar-foreground: oklch(0.8 0.014 264);
-  --sidebar-primary: oklch(0.5854 0.2041 277.12);
-  --sidebar-primary-foreground: oklch(0.98 0.005 277);
-  --sidebar-accent: oklch(0.2564 0.0252 263);
-  --sidebar-accent-foreground: oklch(0.9276 0.0058 264);
-  --sidebar-border: oklch(1 0 0 / 7%);
-  --sidebar-ring: oklch(0.5854 0.2041 277.12 / 0.7);
+  --sidebar: oklch(0.132 0.015 247);
+  --sidebar-foreground: oklch(0.82 0.014 248);
+  --sidebar-primary: oklch(0.72 0.145 200);
+  --sidebar-primary-foreground: oklch(0.13 0.02 200);
+  --sidebar-accent: oklch(0.198 0.02 245);
+  --sidebar-accent-foreground: oklch(0.94 0.008 248);
+  --sidebar-border: oklch(1 0 0 / 9%);
+  --sidebar-ring: oklch(0.72 0.145 200 / 0.65);
 
   --gradient-intel: linear-gradient(135deg, var(--primary), var(--intel));
   --gradient-clay: linear-gradient(
     155deg,
-    oklch(1 0 0 / 0.07) 0%,
-    oklch(1 0 0 / 0.02) 42%,
-    oklch(0 0 0 / 0.12) 100%
+    oklch(1 0 0 / 0.06) 0%,
+    oklch(1 0 0 / 0.015) 42%,
+    oklch(0 0 0 / 0.14) 100%
   );
   --gradient-panel: var(--gradient-clay);
-  --grid-line: oklch(1 0 0 / 0.05);
+  --grid-line: oklch(1 0 0 / 0.055);
 }
 
 .dark {
@@ -163,19 +166,19 @@
     background-color: var(--color-background);
     background-image:
       radial-gradient(
-        60% 45% at 12% -5%,
-        oklch(0.5854 0.2041 277.12 / 0.16),
-        transparent 70%
+        55% 42% at 8% -8%,
+        oklch(0.72 0.145 200 / 0.14),
+        transparent 72%
       ),
       radial-gradient(
-        50% 40% at 92% 0%,
-        oklch(0.6268 0.2325 303.9 / 0.13),
-        transparent 70%
+        48% 38% at 94% 2%,
+        oklch(0.62 0.14 278 / 0.11),
+        transparent 72%
       ),
       radial-gradient(
-        45% 45% at 60% 110%,
-        oklch(0.7889 0.1341 197.65 / 0.07),
-        transparent 70%
+        42% 40% at 55% 108%,
+        oklch(0.72 0.14 155 / 0.06),
+        transparent 72%
       );
     background-attachment: fixed;
     color: var(--color-foreground);
@@ -263,12 +266,12 @@
 
 /* Inset / pressed clay well — for inputs, tracks, code blocks. */
 @utility clay-inset {
-  background-color: oklch(0.1509 0.0175 265 / 0.75);
+  background-color: color-mix(in oklab, var(--background) 88%, black);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow:
-    0 2px 8px 0 oklch(0 0 0 / 0.45) inset,
-    0 -1px 0 0 oklch(1 0 0 / 0.04) inset;
+    0 2px 10px 0 oklch(0 0 0 / 0.5) inset,
+    0 -1px 0 0 oklch(1 0 0 / 0.035) inset;
 }
 
 @utility clay-pill {
@@ -411,21 +414,21 @@
 /* ---------- Landing page (cinematic) design tokens ---------- */
 
 :root {
-  --lp-bg: #06070a;
-  --lp-bg-2: #090b10;
-  --lp-surface: #0d1017;
-  --lp-elevated: #141925;
-  --lp-text: #f4f7fb;
-  --lp-text-2: #98a2b3;
-  --lp-muted: #667085;
-  --lp-accent: #6e8cff;
-  --lp-accent-2: #8b7cff;
-  --lp-signal: #4da3ff;
-  --lp-verified: #4ce0a3;
-  --lp-warning: #ffb84d;
-  --lp-critical: #ff5c70;
-  --lp-line: rgb(255 255 255 / 0.08);
-  --lp-line-strong: rgb(255 255 255 / 0.16);
+  --lp-bg: #080a0f;
+  --lp-bg-2: #0b0e15;
+  --lp-surface: #10141c;
+  --lp-elevated: #161b26;
+  --lp-text: #eef2f8;
+  --lp-text-2: #9aa4b8;
+  --lp-muted: #5c667a;
+  --lp-accent: #38bdf8;
+  --lp-accent-2: #818cf8;
+  --lp-signal: #22d3ee;
+  --lp-verified: #34d399;
+  --lp-warning: #fbbf24;
+  --lp-critical: #f87171;
+  --lp-line: rgb(255 255 255 / 0.09);
+  --lp-line-strong: rgb(255 255 255 / 0.17);
 }
 
 @theme inline {

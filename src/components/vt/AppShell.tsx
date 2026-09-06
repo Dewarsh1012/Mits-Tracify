@@ -35,47 +35,53 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useUIStore } from "@/stores/ui";
 import { useAuth } from "@/hooks/useAuth";
 
-const NAV = [
-  { to: "/dashboard", label: "Dashboard", icon: Gauge },
-  { to: "/complaints", label: "Complaints", icon: Inbox },
-  { to: "/alerts", label: "Alerts", icon: Siren },
-  { to: "/attribution", label: "Attribution", icon: Building2 },
-  { to: "/ai", label: "AI copilot", icon: Sparkles },
-  { to: "/cases", label: "Cases", icon: FolderOpen },
-  { to: "/investigations", label: "Investigations", icon: Radar },
-  { to: "/findings", label: "Findings", icon: ShieldAlert },
-  { to: "/evidence", label: "Evidence vault", icon: Vault },
-  { to: "/reports", label: "Reports", icon: FileText },
-  { to: "/settings", label: "Settings", icon: Settings },
+const NAV_SECTIONS = [
+  {
+    label: "Command center",
+    items: [{ to: "/dashboard", label: "Dashboard", icon: Gauge }],
+  },
+  {
+    label: "Investigate",
+    items: [
+      { to: "/investigations", label: "Investigations", icon: Radar },
+      { to: "/cases", label: "Cases", icon: FolderOpen },
+      { to: "/alerts", label: "Alerts", icon: Siren },
+    ],
+  },
+  {
+    label: "Intelligence",
+    items: [
+      { to: "/attribution", label: "Entity intelligence", icon: Building2 },
+      { to: "/complaints", label: "Case intake", icon: Inbox },
+    ],
+  },
+  {
+    label: "Output",
+    items: [
+      { to: "/reports", label: "Reports", icon: FileText },
+      { to: "/evidence", label: "Evidence", icon: Vault },
+    ],
+  },
+  {
+    label: "Tools",
+    items: [{ to: "/ai", label: "AI copilot", icon: Sparkles }],
+  },
+  {
+    label: "System",
+    items: [{ to: "/settings", label: "Settings", icon: Settings }],
+  },
 ] as const;
 
+const NAV = NAV_SECTIONS.flatMap((s) => s.items);
 
-const NOTIFICATIONS = [
-  {
-    title: "Sanctioned wallet touched",
-    body: "0x9e7f…6a1b interacted with 3 sanctioned addresses.",
-    time: "2m",
-    dot: "bg-critical",
-  },
-  {
-    title: "Trace completed",
-    body: "INV-2026-0114 finished a 9-hop bounded graph.",
-    time: "18m",
-    dot: "bg-positive",
-  },
-  {
-    title: "Mixer exposure detected",
-    body: "Peel chain routed 41 ETH through TornadoCash.",
-    time: "1h",
-    dot: "bg-warning",
-  },
-  {
-    title: "New attribution candidate",
-    body: "Deposit cluster matched to a mid-tier VASP.",
-    time: "3h",
-    dot: "bg-intel",
-  },
-];
+/** Primary destinations for mobile bottom bar */
+const MOBILE_NAV = [
+  { to: "/dashboard", label: "Home", icon: Gauge },
+  { to: "/investigations", label: "Traces", icon: Radar },
+  { to: "/cases", label: "Cases", icon: FolderOpen },
+  { to: "/alerts", label: "Alerts", icon: Siren },
+  { to: "/settings", label: "More", icon: Settings },
+] as const;
 
 
 
@@ -130,47 +136,55 @@ function Sidebar() {
         </AnimatePresence>
       </div>
 
-      <nav className="flex-1 space-y-1.5 overflow-y-auto p-3">
-        {NAV.map(({ to, label, icon: Icon }) => {
-          const active = pathname === to || pathname.startsWith(`${to}/`);
-          const link = (
-            <Link
-              key={to}
-              to={to}
-              className={cn(
-                "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-300",
-                active
-                  ? "clay text-sidebar-accent-foreground shadow-[0_12px_28px_-16px_var(--primary-glow)]"
-                  : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
-                collapsed && "justify-center px-0",
-              )}
-            >
-              {active ? (
-                <motion.span
-                  layoutId="nav-active"
-                  className="absolute left-1 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-full bg-sidebar-primary"
-                  transition={{ type: "spring", stiffness: 500, damping: 40 }}
-                />
-              ) : null}
-              <Icon
-                className={cn(
-                  "size-[18px] shrink-0 transition-colors",
-                  active && "text-primary",
-                )}
-              />
-              {!collapsed && <span className="truncate">{label}</span>}
-            </Link>
-          );
+      <nav className="flex-1 space-y-4 overflow-y-auto p-3">
+        {NAV_SECTIONS.map((section) => (
+          <div key={section.label}>
+            {!collapsed && (
+              <p className="label-caps mb-1.5 px-3 text-[10px] text-muted-foreground/80">
+                {section.label}
+              </p>
+            )}
+            <div className="space-y-1">
+              {section.items.map(({ to, label, icon: Icon }) => {
+                const active =
+                  pathname === to ||
+                  pathname.startsWith(`${to}/`) ||
+                  (to === "/investigations" && pathname.startsWith("/investigations"));
+                const link = (
+                  <Link
+                    key={to}
+                    to={to}
+                    className={cn(
+                      "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-all duration-300",
+                      active
+                        ? "bg-sidebar-accent/80 text-sidebar-accent-foreground shadow-[inset_3px_0_0_0_var(--primary)]"
+                        : "text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground",
+                      collapsed && "justify-center px-0",
+                    )}
+                    aria-current={active ? "page" : undefined}
+                  >
+                    <Icon
+                      className={cn(
+                        "size-[18px] shrink-0 transition-colors",
+                        active && "text-primary",
+                      )}
+                    />
+                    {!collapsed && <span className="truncate">{label}</span>}
+                  </Link>
+                );
 
-          return collapsed ? (
-            <Tooltip key={to}>
-              <TooltipTrigger asChild>{link}</TooltipTrigger>
-              <TooltipContent side="right">{label}</TooltipContent>
-            </Tooltip>
-          ) : (
-            link
-          );
-        })}
+                return collapsed ? (
+                  <Tooltip key={to}>
+                    <TooltipTrigger asChild>{link}</TooltipTrigger>
+                    <TooltipContent side="right">{label}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  link
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
 
@@ -238,45 +252,11 @@ function Topbar() {
           <Search className="size-4" />
         </Button>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="clay-icon relative hidden size-10 sm:flex"
-              aria-label="Notifications"
-            >
-              <Bell className="size-4 text-muted-foreground" />
-              <span className="absolute -right-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-critical text-[9px] font-bold text-critical-foreground">
-                4
-              </span>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-80">
-            <DropdownMenuLabel className="label-caps">
-              Notifications
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {NOTIFICATIONS.map((n) => (
-              <DropdownMenuItem
-                key={n.title}
-                className="flex-col items-start gap-0.5 py-2.5"
-              >
-                <span className="flex w-full items-center gap-2 text-[13px] font-medium">
-                  <span
-                    className={cn("size-1.5 shrink-0 rounded-full", n.dot)}
-                  />
-                  {n.title}
-                  <span className="ml-auto text-[10px] font-normal text-muted-foreground">
-                    {n.time}
-                  </span>
-                </span>
-                <span className="pl-3.5 text-[11px] text-muted-foreground">
-                  {n.body}
-                </span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <Button variant="ghost" size="icon" className="hidden sm:flex" asChild>
+          <Link to="/alerts" aria-label="Open alerts">
+            <Bell className="size-4 text-muted-foreground" />
+          </Link>
+        </Button>
 
         {user ? (
           <DropdownMenu>
@@ -333,8 +313,8 @@ function MobileNav() {
   return (
     <nav className="sticky bottom-0 z-30 px-3 pb-3 lg:hidden">
       <div className="clay flex items-center justify-between gap-1 px-2 py-2">
-      {NAV.slice(0, 5).map(({ to, label, icon: Icon }) => {
-        const active = pathname.startsWith(to);
+      {MOBILE_NAV.map(({ to, label, icon: Icon }) => {
+        const active = pathname === to || pathname.startsWith(`${to}/`);
         return (
           <Link
             key={to}
@@ -343,9 +323,10 @@ function MobileNav() {
               "flex flex-1 flex-col items-center gap-1 rounded-xl py-1.5 text-[10px] transition-colors",
               active ? "clay-inset text-primary" : "text-muted-foreground",
             )}
+            aria-current={active ? "page" : undefined}
           >
             <Icon className="size-[18px]" />
-            <span className="truncate">{label.split(" ")[0]}</span>
+            <span className="truncate">{label}</span>
           </Link>
         );
       })}

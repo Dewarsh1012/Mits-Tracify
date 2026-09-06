@@ -166,8 +166,8 @@ function FindingsPage() {
 
               {f.investigation_id ? (
                 <Link
-                  to="/investigations/$investigationId"
-                  params={{ investigationId: f.investigation_id }}
+                  to="/investigations/$investigationId/$tab"
+                  params={{ investigationId: f.investigation_id!, tab: "risk" }}
                   className="mt-3 inline-block text-[11px] text-primary hover:underline"
                 >
                   Open supporting trace in the workspace

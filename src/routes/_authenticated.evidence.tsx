@@ -57,7 +57,7 @@ function EvidencePage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Chain of custody"
-        title="Evidence vault"
+        title="Evidence"
         description="Every artefact is time-stamped and attributed to the investigator who pinned it, so conclusions stay defensible outside this tool."
         actions={
           <Select value={type} onValueChange={setType}>

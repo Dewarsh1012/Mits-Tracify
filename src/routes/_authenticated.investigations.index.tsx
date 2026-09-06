@@ -17,6 +17,7 @@ import {
   InvestigationStatusBadge,
   Mono,
 } from "@/components/vt/badges";
+import { DeleteInvestigationButton } from "@/components/vt/DeleteInvestigationButton";
 import {
   EmptyState,
   ErrorState,
@@ -82,10 +83,17 @@ function InvestigationsPage() {
         title="Investigations"
         description="Each investigation is a bounded trace: one target wallet, one chain, an explicit hop limit and an optional time window."
         actions={
-          <Button onClick={() => setStartInvestigationOpen(true)}>
-            <Radar className="size-4" />
-            Start investigation
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" asChild>
+              <Link to="/investigations/new">
+                <Radar className="size-4" />
+                New investigation
+              </Link>
+            </Button>
+            <Button onClick={() => setStartInvestigationOpen(true)}>
+              Quick trace
+            </Button>
+          </div>
         }
       />
 
@@ -134,28 +142,38 @@ function InvestigationsPage() {
       ) : (
         <div className="grid gap-3">
           {filtered.map((inv) => (
-            <Link
+            <div
               key={inv.id}
-              to="/investigations/$investigationId"
-              params={{ investigationId: inv.id }}
-              className="clay clay-lift flex flex-col gap-2 rounded-2xl p-4.5 shadow-clay transition-all hover:border-border-strong sm:flex-row sm:items-center sm:gap-4 cursor-pointer"
+              className="clay clay-lift flex flex-col gap-2 rounded-2xl p-4.5 shadow-clay transition-all hover:border-border-strong sm:flex-row sm:items-center sm:gap-4"
             >
-              <Mono className="w-[86px] shrink-0 text-muted-foreground font-semibold">
-                {inv.investigation_ref}
-              </Mono>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold">{inv.name}</p>
-                <p className="mono mt-0.5 text-[11px] text-muted-foreground">
-                  {truncateAddress(inv.target_address, 14, 10)} · case{" "}
-                  {caseRef(inv.case_id)}
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <Chip>{chainLabel(inv.blockchain)}</Chip>
-                <Chip>{inv.trace_depth} hops</Chip>
-                <InvestigationStatusBadge status={inv.status} />
-              </div>
-            </Link>
+              <Link
+                to="/investigations/$investigationId/$tab"
+                params={{ investigationId: inv.id, tab: "overview" }}
+                className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-4"
+              >
+                <Mono className="w-[86px] shrink-0 text-muted-foreground font-semibold">
+                  {inv.investigation_ref}
+                </Mono>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{inv.name}</p>
+                  <p className="mono mt-0.5 text-[11px] text-muted-foreground">
+                    {truncateAddress(inv.target_address, 14, 10)} · case{" "}
+                    {caseRef(inv.case_id)}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Chip>{chainLabel(inv.blockchain)}</Chip>
+                  <Chip>{inv.trace_depth} hops</Chip>
+                  <InvestigationStatusBadge status={inv.status} />
+                </div>
+              </Link>
+              <DeleteInvestigationButton
+                investigation={inv}
+                variant="ghost"
+                size="icon"
+                className="shrink-0 text-muted-foreground hover:text-destructive"
+              />
+            </div>
           ))}
         </div>
       )}

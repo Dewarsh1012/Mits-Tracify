@@ -42,7 +42,23 @@ const BLOCKSCOUT_ENDPOINTS: Record<string, string> = {
   polygon: "https://polygon.blockscout.com/api/v2",
   arbitrum: "https://arbitrum.blockscout.com/api/v2",
   base: "https://base.blockscout.com/api/v2",
-  bsc: "https://eth.blockscout.com/api/v2", // Fallback EVM
+  bsc: "https://bsc.blockscout.com/api/v2",
+};
+
+/**
+ * Etherscan V2 multichain endpoint — one key across all supported EVM chains.
+ * Falls back key defaults to the SIH demo key; VITE_ETHERSCAN_API_KEY overrides.
+ */
+const ETHERSCAN_API_KEY =
+  (import.meta.env['VITE_ETHERSCAN_API_KEY'] as string | undefined) ??
+  "NVCS3RGHYJGH6TCB7SWCMZGKWT1N4MW39M";
+
+const ETHERSCAN_CHAIN_ID: Record<string, number> = {
+  ethereum: 1,
+  bsc: 56,
+  polygon: 137,
+  arbitrum: 42161,
+  base: 8453,
 };
 
 const NATIVE_ASSET_MAP: Record<string, { symbol: string; approxUsd: number }> = {
@@ -50,7 +66,37 @@ const NATIVE_ASSET_MAP: Record<string, { symbol: string; approxUsd: number }> = 
   polygon: { symbol: "POL", approxUsd: 0.45 },
   bsc: { symbol: "BNB", approxUsd: 590 },
   arbitrum: { symbol: "ETH", approxUsd: 3250 },
+  base: { symbol: "ETH", approxUsd: 3250 },
 };
+
+export interface FetchTransactionsOptions {
+  includeTokens?: boolean;
+  timeoutMs?: number;
+  minValueUsd?: number;
+  windowStart?: string | null;
+  windowEnd?: string | null;
+}
+
+function filterTransactions(
+  txs: InternalTransaction[],
+  options?: Pick<FetchTransactionsOptions, "minValueUsd" | "windowStart" | "windowEnd">,
+): InternalTransaction[] {
+  const min = options?.minValueUsd ?? 0;
+  const startMs = options?.windowStart ? new Date(options.windowStart).getTime() : null;
+  const endMs = options?.windowEnd ? new Date(options.windowEnd).getTime() : null;
+
+  return txs.filter((tx) => {
+    if (min > 0 && (tx.valueUsd ?? 0) < min) return false;
+    if (startMs !== null && tx.unixTime < startMs) return false;
+    if (endMs !== null && tx.unixTime > endMs) return false;
+    return true;
+  });
+}
+
+function etherscanBaseUrl(chain: string): string {
+  const chainId = ETHERSCAN_CHAIN_ID[chain.toLowerCase()] ?? 1;
+  return `https://api.etherscan.io/v2/api?chainid=${chainId}&apikey=${ETHERSCAN_API_KEY}`;
+}
 
 /** Validates that an address is structurally sound for the target blockchain */
 export function validateAddress(address: string, chain = "ethereum"): { valid: boolean; format: string; error?: string } {
@@ -98,51 +144,159 @@ function formatUnits(raw: string | number, decimals = 18): string {
 }
 
 /**
- * Fetches real on-chain transactions for an address via high-throughput public indexer.
+ * Fetches native + token transfers via Etherscan V2 multichain API (always live — never from DB).
  */
-export async function fetchLiveTransactions(
+export async function fetchEtherscanTransactions(
   chain = "ethereum",
   address: string,
-  maxItems = 35
+  maxItems = 35,
+  options?: Pick<FetchTransactionsOptions, "includeTokens" | "timeoutMs">,
+): Promise<InternalTransaction[]> {
+  const chainKey = chain.toLowerCase();
+  const normAddress = address.trim().toLowerCase();
+  const nativeInfo = NATIVE_ASSET_MAP[chainKey] ?? { symbol: "ETH", approxUsd: 3200 };
+  const includeTokens = options?.includeTokens ?? true;
+  const timeoutMs = options?.timeoutMs ?? 8000;
+  const base = etherscanBaseUrl(chainKey);
+
+  try {
+    const url =
+      `${base}&module=account&action=txlist&address=${normAddress}` +
+      `&startblock=0&endblock=99999999&page=1&offset=${maxItems}&sort=desc`;
+
+    const res = await fetch(url, {
+      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    if (!res.ok) return [];
+
+    const data = (await res.json()) as {
+      status: string;
+      result: Record<string, unknown>[] | string;
+    };
+    if (data.status !== "1" || !Array.isArray(data.result)) return [];
+
+    const txs: InternalTransaction[] = data.result.map((tx) => {
+      const valFormatted = formatUnits(String(tx["value"] || "0"), 18);
+      const ts = new Date(Number(tx["timeStamp"] || 0) * 1000).toISOString();
+      const from = String(tx["from"] || "").toLowerCase();
+      const rawVal = Number(tx["value"] || 0);
+      return {
+        hash: String(tx["hash"] || ""),
+        from,
+        to: String(tx["to"] || "").toLowerCase(),
+        value: `${valFormatted} ${nativeInfo.symbol}`,
+        valueRaw: String(tx["value"] || "0"),
+        valueUsd: Math.round((rawVal / 1e18) * nativeInfo.approxUsd),
+        asset: nativeInfo.symbol,
+        timestamp: ts,
+        unixTime: new Date(ts).getTime(),
+        blockNumber: Number(tx["blockNumber"] || 0),
+        direction: from === normAddress ? "out" : "in",
+        status: tx["isError"] === "0" ? "success" : "failed",
+      };
+    });
+
+    if (includeTokens) {
+      try {
+        const tokenUrl =
+          `${base}&module=account&action=tokentx&address=${normAddress}` +
+          `&startblock=0&endblock=99999999&page=1&offset=${Math.min(maxItems, 30)}&sort=desc`;
+        const tokenRes = await fetch(tokenUrl, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(Math.min(timeoutMs, 5000)),
+        });
+        if (tokenRes.ok) {
+          const tokenData = (await tokenRes.json()) as {
+            status: string;
+            result: Record<string, unknown>[] | string;
+          };
+          if (tokenData.status === "1" && Array.isArray(tokenData.result)) {
+            for (const tr of tokenData.result) {
+              const tHash = String(tr["hash"] || "");
+              if (txs.some((t) => t.hash === tHash)) continue;
+              const symbol = String(tr["tokenSymbol"] || "ERC20");
+              const decimals = Number(tr["tokenDecimal"] || 18);
+              const totalRaw = String(tr["value"] || "0");
+              const amountStr = formatUnits(totalRaw, decimals);
+              const ts = new Date(Number(tr["timeStamp"] || 0) * 1000).toISOString();
+              const tFrom = String(tr["from"] || "").toLowerCase();
+              const tTo = String(tr["to"] || "").toLowerCase();
+              txs.push({
+                hash: tHash,
+                from: tFrom,
+                to: tTo,
+                value: `${amountStr} ${symbol}`,
+                valueRaw: totalRaw,
+                valueUsd: symbol.includes("USD")
+                  ? Math.round(Number(totalRaw) / Math.pow(10, decimals))
+                  : undefined,
+                asset: symbol,
+                timestamp: ts,
+                unixTime: new Date(ts).getTime(),
+                blockNumber: Number(tr["blockNumber"] || 0),
+                direction: tFrom === normAddress ? "out" : "in",
+                status: "success",
+                isTokenTransfer: true,
+                tokenSymbol: symbol,
+                tokenDecimals: decimals,
+              });
+            }
+          }
+        }
+      } catch {
+        // Token list is optional
+      }
+    }
+
+    return txs.sort((a, b) => b.unixTime - a.unixTime);
+  } catch {
+    return [];
+  }
+}
+
+async function fetchBlockscoutTransactions(
+  chain: string,
+  address: string,
+  maxItems: number,
+  options?: Pick<FetchTransactionsOptions, "includeTokens" | "timeoutMs">,
 ): Promise<InternalTransaction[]> {
   const normAddress = address.trim().toLowerCase();
-  const endpoint = BLOCKSCOUT_ENDPOINTS[chain.toLowerCase()] || BLOCKSCOUT_ENDPOINTS['ethereum']!;
+  const endpoint = BLOCKSCOUT_ENDPOINTS[chain.toLowerCase()] || BLOCKSCOUT_ENDPOINTS["ethereum"]!;
   const native = NATIVE_ASSET_MAP[chain.toLowerCase()] || { symbol: "ETH", approxUsd: 3200 };
+  const includeTokens = options?.includeTokens ?? true;
+  const timeoutMs = options?.timeoutMs ?? 8000;
 
   const url = `${endpoint}/addresses/${normAddress}/transactions`;
 
   try {
     const res = await fetch(url, {
       headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
-    if (!res.ok) {
-      console.warn(`[LiveAdapter] Indexer returned HTTP ${res.status}, falling back to alternative.`);
-      return fetchFallbackTransactions(chain, normAddress);
-    }
+    if (!res.ok) return [];
 
     const data = (await res.json()) as { items?: Record<string, unknown>[] };
     const items = Array.isArray(data.items) ? data.items : [];
-
     const txs: InternalTransaction[] = [];
 
     for (const raw of items.slice(0, maxItems)) {
-      const hash = String(raw['hash'] || "");
-      const fromObj = raw['from'] as { hash?: string } | undefined;
-      const toObj = raw['to'] as { hash?: string } | undefined;
-      const from = String(fromObj?.hash || raw['from'] || "").toLowerCase();
-      const to = String(toObj?.hash || raw['to'] || "").toLowerCase();
-      const timestamp = String(raw['timestamp'] || new Date().toISOString());
-      const blockNumber = Number(raw['block'] || raw['block_number'] || 0);
-      const valueRaw = String(raw['value'] || "0");
-      const status = raw['result'] === "success" || raw['status'] === "ok" ? "success" : "failed";
+      const hash = String(raw["hash"] || "");
+      const fromObj = raw["from"] as { hash?: string } | undefined;
+      const toObj = raw["to"] as { hash?: string } | undefined;
+      const from = String(fromObj?.hash || raw["from"] || "").toLowerCase();
+      const to = String(toObj?.hash || raw["to"] || "").toLowerCase();
+      const timestamp = String(raw["timestamp"] || new Date().toISOString());
+      const blockNumber = Number(raw["block"] || raw["block_number"] || 0);
+      const valueRaw = String(raw["value"] || "0");
+      const status =
+        raw["result"] === "success" || raw["status"] === "ok" ? "success" : "failed";
 
       const valFormatted = formatUnits(valueRaw, 18);
       const valNumber = Number(valueRaw) / 1e18;
       const valueUsd = Math.round(valNumber * native.approxUsd);
-
-      const isOutbound = from === normAddress;
 
       txs.push({
         hash,
@@ -155,105 +309,93 @@ export async function fetchLiveTransactions(
         timestamp,
         unixTime: new Date(timestamp).getTime(),
         blockNumber,
-        direction: isOutbound ? "out" : "in",
+        direction: from === normAddress ? "out" : "in",
         status,
       });
     }
 
-    // Try also to fetch token transfers (ERC-20 USDT, USDC, DAI) to ensure multi-asset coverage
-    try {
-      const tokenUrl = `${endpoint}/addresses/${normAddress}/token-transfers`;
-      const tokenRes = await fetch(tokenUrl, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (tokenRes.ok) {
-        const tokenData = (await tokenRes.json()) as { items?: Record<string, unknown>[] };
-        const tokenItems = Array.isArray(tokenData.items) ? tokenData.items : [];
-        for (const tr of tokenItems.slice(0, 15)) {
-          const tHash = String(tr['tx_hash'] || tr['hash'] || "");
-          // Skip if already captured
-          if (txs.some((t) => t.hash === tHash)) continue;
+    if (includeTokens) {
+      try {
+        const tokenUrl = `${endpoint}/addresses/${normAddress}/token-transfers`;
+        const tokenRes = await fetch(tokenUrl, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(Math.min(timeoutMs, 5000)),
+        });
+        if (tokenRes.ok) {
+          const tokenData = (await tokenRes.json()) as { items?: Record<string, unknown>[] };
+          const tokenItems = Array.isArray(tokenData.items) ? tokenData.items : [];
+          for (const tr of tokenItems.slice(0, 15)) {
+            const tHash = String(tr["tx_hash"] || tr["hash"] || "");
+            if (txs.some((t) => t.hash === tHash)) continue;
 
-          const tFromObj = tr['from'] as { hash?: string } | undefined;
-          const tToObj = tr['to'] as { hash?: string } | undefined;
-          const tFrom = String(tFromObj?.hash || tr['from'] || "").toLowerCase();
-          const tTo = String(tToObj?.hash || tr['to'] || "").toLowerCase();
-          const tokenObj = tr['token'] as { symbol?: string; decimals?: string } | undefined;
-          const symbol = tokenObj?.symbol || "ERC20";
-          const decimals = Number(tokenObj?.decimals || 18);
-          const totalRaw = (tr['total'] as { value?: string })?.value || "0";
-          const amountStr = formatUnits(totalRaw, decimals);
-          const tStamp = String(tr['timestamp'] || new Date().toISOString());
+            const tFromObj = tr["from"] as { hash?: string } | undefined;
+            const tToObj = tr["to"] as { hash?: string } | undefined;
+            const tFrom = String(tFromObj?.hash || tr["from"] || "").toLowerCase();
+            const tTo = String(tToObj?.hash || tr["to"] || "").toLowerCase();
+            const tokenObj = tr["token"] as { symbol?: string; decimals?: string } | undefined;
+            const symbol = tokenObj?.symbol || "ERC20";
+            const decimals = Number(tokenObj?.decimals || 18);
+            const totalRaw = (tr["total"] as { value?: string })?.value || "0";
+            const amountStr = formatUnits(totalRaw, decimals);
+            const tStamp = String(tr["timestamp"] || new Date().toISOString());
 
-          txs.push({
-            hash: tHash,
-            from: tFrom,
-            to: tTo,
-            value: `${amountStr} ${symbol}`,
-            valueRaw: totalRaw,
-            valueUsd: symbol.includes("USD") ? Math.round(Number(totalRaw) / Math.pow(10, decimals)) : undefined,
-            asset: symbol,
-            timestamp: tStamp,
-            unixTime: new Date(tStamp).getTime(),
-            blockNumber: Number(tr['block_number'] || 0),
-            direction: tFrom === normAddress ? "out" : "in",
-            status: "success",
-            isTokenTransfer: true,
-            tokenSymbol: symbol,
-            tokenDecimals: decimals,
-          });
+            txs.push({
+              hash: tHash,
+              from: tFrom,
+              to: tTo,
+              value: `${amountStr} ${symbol}`,
+              valueRaw: totalRaw,
+              valueUsd: symbol.includes("USD")
+                ? Math.round(Number(totalRaw) / Math.pow(10, decimals))
+                : undefined,
+              asset: symbol,
+              timestamp: tStamp,
+              unixTime: new Date(tStamp).getTime(),
+              blockNumber: Number(tr["block_number"] || 0),
+              direction: tFrom === normAddress ? "out" : "in",
+              status: "success",
+              isTokenTransfer: true,
+              tokenSymbol: symbol,
+              tokenDecimals: decimals,
+            });
+          }
         }
+      } catch {
+        // Non-critical
       }
-    } catch {
-      // Non-critical token transfer fallback
     }
 
-    // Sort descending by timestamp (latest first)
     return txs.sort((a, b) => b.unixTime - a.unixTime);
-  } catch (error) {
-    console.warn(`[LiveAdapter] Failed to fetch live transactions from ${endpoint}:`, error);
-    return fetchFallbackTransactions(chain, normAddress);
+  } catch {
+    return [];
   }
 }
 
-/** Fallback to public RPC / Etherscan query */
-async function fetchFallbackTransactions(chain: string, address: string): Promise<InternalTransaction[]> {
-  try {
-    const etherscanUrl = `https://api.etherscan.io/api?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=25&sort=desc`;
-    const res = await fetch(etherscanUrl, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) {
-      const data = (await res.json()) as { status: string; result: Record<string, unknown>[] };
-      if (data.status === "1" && Array.isArray(data.result)) {
-        return data.result.map((tx) => {
-          const valFormatted = formatUnits(String(tx['value'] || "0"), 18);
-          const ts = new Date(Number(tx['timeStamp'] || 0) * 1000).toISOString();
-          const from = String(tx['from'] || "").toLowerCase();
-          return {
-            hash: String(tx['hash'] || ""),
-            from,
-            to: String(tx['to'] || "").toLowerCase(),
-            value: `${valFormatted} ETH`,
-            valueRaw: String(tx['value'] || "0"),
-            valueUsd: Math.round((Number(tx['value']) / 1e18) * 3200),
-            asset: "ETH",
-            timestamp: ts,
-            unixTime: new Date(ts).getTime(),
-            blockNumber: Number(tx['blockNumber'] || 0),
-            direction: from === address ? "out" : "in",
-            status: tx['isError'] === "0" ? "success" : "failed",
-          };
-        });
-      }
-    }
-  } catch {
-    // Graceful fallback
+/**
+ * Always fetches live on-chain history — Etherscan API key first, Blockscout fallback.
+ * Never reads from database or cached investigation artifacts.
+ */
+export async function fetchInvestigationTransactions(
+  chain = "ethereum",
+  address: string,
+  maxItems = 50,
+  options?: FetchTransactionsOptions,
+): Promise<InternalTransaction[]> {
+  let txs = await fetchEtherscanTransactions(chain, address, maxItems, options);
+  if (txs.length === 0) {
+    txs = await fetchBlockscoutTransactions(chain, address, maxItems, options);
   }
+  return filterTransactions(txs, options);
+}
 
-  return [];
+/** Used by graph expansion during pipeline runs — same live fetch path. */
+export async function fetchLiveTransactions(
+  chain = "ethereum",
+  address: string,
+  maxItems = 35,
+  options?: Pick<FetchTransactionsOptions, "includeTokens" | "timeoutMs">,
+): Promise<InternalTransaction[]> {
+  return fetchInvestigationTransactions(chain, address, maxItems, options);
 }
 
 /** Fetches real live balance and account summary */

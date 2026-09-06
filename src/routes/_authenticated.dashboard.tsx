@@ -7,6 +7,7 @@ import {
   ArrowRight,
   Bot,
   Compass,
+  FileText,
   Flag,
   FolderOpen,
   FolderPlus,
@@ -33,16 +34,18 @@ import {
   SeverityBadge,
   StatusBadge,
 } from "@/components/vt/badges";
+import { DeleteInvestigationButton } from "@/components/vt/DeleteInvestigationButton";
 import {
   ActivityRow,
   ClayCard,
   ClayIcon,
   ClayProgress,
+  DistributionPieChart,
   KpiCard,
   QuickAction,
-  RiskRing,
   SectionHeading,
   TrendChart,
+  type PieSlice,
   type TrendPoint,
 } from "@/components/vt/clay";
 import {
@@ -101,7 +104,6 @@ function greeting() {
 }
 
 function DashboardPage() {
-  const setCreateCaseOpen = useUIStore((s) => s.setCreateCaseOpen);
   const setStartInvestigationOpen = useUIStore(
     (s) => s.setStartInvestigationOpen,
   );
@@ -129,26 +131,6 @@ function DashboardPage() {
   const criticalFindings = (findings.data ?? []).filter((f) =>
     ["critical", "high"].includes(f.severity),
   );
-
-  // --- Computed TREND from real investigation dates ---
-  const TREND = useMemo((): TrendPoint[] => {
-    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const buckets: Record<string, { completed: number; ongoing: number }> = {};
-    const today = new Date();
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(today.getDate() - i);
-      buckets[days[d.getDay()]!] = { completed: 0, ongoing: 0 };
-    }
-    for (const inv of investigations.data ?? []) {
-      const d = new Date(inv.created_at);
-      const key = days[d.getDay()]!;
-      if (!(key in buckets)) continue;
-      if (inv.status === "complete") buckets[key]!.completed++;
-      else if (["queued", "processing"].includes(inv.status)) buckets[key]!.ongoing++;
-    }
-    return Object.entries(buckets).map(([label, v]) => ({ label, ...v }));
-  }, [investigations.data]);
 
   // --- FEED from most-recent investigations + evidence ---
   const FEED = useMemo(() => {
@@ -213,33 +195,74 @@ function DashboardPage() {
     }));
   }, [findings.data]);
 
-  // --- RISK_FACTORS computed from findings distribution ---
-  const RISK_FACTORS = useMemo(() => {
+  const topRiskSignals = useMemo(() => {
     const all = findings.data ?? [];
-    const invCount = investigations.data?.length ?? 0;
-    const total = Math.max(1, all.length);
-    const critical = all.filter((f) => f.severity === "critical").length;
-    const high = all.filter((f) => f.severity === "high").length;
-    const week = investigations.data?.filter((i) => {
-      const d = new Date(i.created_at);
-      return Date.now() - d.getTime() < 7 * 86_400_000;
-    }).length ?? 0;
-    const vaspFindings = all.filter((f) => f.finding_type === "vasp_endpoint" || f.finding_type === "attribution").length;
-    return [
-      { label: "Transaction behaviour", value: Math.min(100, Math.round(((critical + high) / total) * 100) || 20), tone: "critical" as const },
-      { label: "Counterparty risk", value: Math.min(100, Math.round((critical / total) * 100 * 3) || 15), tone: "warning" as const },
-      { label: "Velocity", value: Math.min(100, Math.round((week / Math.max(1, invCount)) * 100) || 10), tone: "intel" as const },
-      { label: "Entity association", value: Math.min(100, Math.round((vaspFindings / total) * 100 * 2) || 8), tone: "primary" as const },
-      { label: "Sanctions screening", value: Math.min(30, Math.round((all.filter((f) => f.finding_type === "sanctions").length / total) * 100) || 5), tone: "positive" as const },
-    ];
-  }, [findings.data, investigations.data]);
+    const byType = all.reduce<Record<string, number>>((acc, f) => {
+      const key = f.finding_type || "other";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    return Object.entries(byType)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([type, count]) => ({ type: type.replace(/_/g, " "), count }));
+  }, [findings.data]);
 
-  // --- Overall risk score ---
-  const riskScore = useMemo(() => {
-    if (RISK_FACTORS.length === 0) return 0;
-    const avg = RISK_FACTORS.reduce((s, f) => s + f.value, 0) / RISK_FACTORS.length;
-    return Math.round(avg);
-  }, [RISK_FACTORS]);
+  const investigationRiskBands = useMemo(() => {
+    const bands = { critical: 0, high: 0, medium: 0, low: 0 };
+    for (const inv of investigations.data ?? []) {
+      if (inv.status !== "complete") continue;
+      const summary = inv.summary as Record<string, unknown> | null;
+      const score = typeof summary?.riskScore === "number" ? summary.riskScore : null;
+      if (score === null) continue;
+      if (score >= 81) bands.critical += 1;
+      else if (score >= 61) bands.high += 1;
+      else if (score >= 31) bands.medium += 1;
+      else bands.low += 1;
+    }
+    return bands;
+  }, [investigations.data]);
+
+  const investigationTrend = useMemo((): TrendPoint[] => {
+    const days = 7;
+    const buckets: TrendPoint[] = [];
+    const now = new Date();
+    for (let i = days - 1; i >= 0; i -= 1) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      d.setHours(0, 0, 0, 0);
+      const next = new Date(d);
+      next.setDate(next.getDate() + 1);
+      const label = d.toLocaleDateString(undefined, { weekday: "short" });
+      let completed = 0;
+      let ongoing = 0;
+      for (const inv of investigations.data ?? []) {
+        const ts = new Date(inv.updated_at ?? inv.created_at).getTime();
+        if (ts >= d.getTime() && ts < next.getTime()) {
+          if (inv.status === "complete") completed += 1;
+          else if (inv.status === "processing" || inv.status === "queued") ongoing += 1;
+        }
+      }
+      buckets.push({ label, completed, ongoing });
+    }
+    return buckets;
+  }, [investigations.data]);
+
+  const findingSeverityPie = useMemo((): PieSlice[] => {
+    const sevColors = {
+      critical: "var(--critical)",
+      high: "var(--warning)",
+      medium: "var(--intel)",
+      low: "var(--teal)",
+    } as const;
+    return (["critical", "high", "medium", "low"] as const)
+      .map((sev) => ({
+        name: sev.charAt(0).toUpperCase() + sev.slice(1),
+        value: (findings.data ?? []).filter((f) => f.severity === sev).length,
+        color: sevColors[sev],
+      }))
+      .filter((s) => s.value > 0);
+  }, [findings.data]);
 
   return (
     <div className="space-y-6">
@@ -257,13 +280,15 @@ function DashboardPage() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2.5">
-            <Button variant="outline" onClick={() => setCreateCaseOpen(true)}>
-              <FolderPlus className="size-4" />
-              New case
+            <Button asChild>
+              <Link to="/investigations/new">
+                <Radar className="size-4" />
+                New investigation
+              </Link>
             </Button>
-            <Button onClick={() => setStartInvestigationOpen(true)}>
-              <Radar className="size-4" />
-              Start investigation
+            <Button variant="outline" onClick={() => setCommandOpen(true)}>
+              <Search className="size-4" />
+              Search
             </Button>
             <Button variant="secondary" onClick={() => setCommandOpen(true)}>
               <Sparkle className="size-4" />
@@ -275,84 +300,126 @@ function DashboardPage() {
 
       {error ? <ErrorState message={error.message} /> : null}
 
-      {/* KPI row */}
+      {/* Priority metrics — real counts only, no fabricated trends */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Active investigations"
           value={activeInvestigations.length}
           icon={Activity}
           tone="primary"
-          trend={12}
-          trendLabel="from yesterday"
+          trendLabel={`${activeInvestigations.length} currently active`}
           delay={0}
         />
         <KpiCard
-          label="High priority cases"
-          value={priorityCases.length}
-          icon={Flag}
+          label="High-risk findings"
+          value={criticalFindings.length}
+          icon={ShieldAlert}
           tone="critical"
-          trend={8}
-          trendLabel="new escalations"
+          trendLabel={criticalFindings.length > 0 ? "Requires review" : "No critical items"}
           delay={0.05}
         />
         <KpiCard
           label="Findings to review"
-          value={criticalFindings.length}
-          icon={ShieldAlert}
+          value={(findings.data ?? []).filter((f) => f.status !== "closed").length}
+          icon={Flag}
           tone="warning"
-          trend={-4}
-          trendLabel="vs last week"
+          trendLabel={`${(findings.data ?? []).length} total recorded`}
           delay={0.1}
         />
         <KpiCard
-          label="Evidence items"
-          value={(evidence.data ?? []).length}
-          icon={Vault}
+          label="Open cases"
+          value={priorityCases.length}
+          icon={FolderOpen}
           tone="teal"
-          trend={24}
-          trendLabel="pinned this week"
+          trendLabel="High / critical priority"
           delay={0.15}
         />
       </div>
 
-      {/* Overview + risk + insights */}
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+      {/* Analytics — one trend + one pie from live caseload */}
+      <div className="grid gap-4 xl:grid-cols-2">
         <ClayCard className="p-5 sm:p-6" delay={0.05}>
           <SectionHeading
-            title="Investigation overview"
-            description="Completed vs ongoing traces this week"
-            action={<Chip tone="info" dot>This week</Chip>}
+            title="Investigation activity"
+            description="Completed vs active traces over the last 7 days"
           />
-          <TrendChart data={TREND} />
-          <div className="mt-3 flex items-center gap-5 text-[11px] text-muted-foreground">
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-primary" /> Completed
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-intel" /> Ongoing
-            </span>
+          <TrendChart data={investigationTrend} />
+        </ClayCard>
+
+        <ClayCard className="p-5 sm:p-6" delay={0.08}>
+          <SectionHeading
+            title="Finding severity"
+            description="All recorded findings by severity band"
+          />
+          <DistributionPieChart data={findingSeverityPie} emptyLabel="No findings recorded yet" />
+        </ClayCard>
+      </div>
+
+      {/* Investigation status + priority queue */}
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+        <ClayCard className="p-5 sm:p-6" delay={0.05}>
+          <SectionHeading
+            title="Investigation status"
+            description="Queued, processing, and completed traces"
+          />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { label: "Queued", count: (investigations.data ?? []).filter((i) => i.status === "queued").length },
+              { label: "Analyzing", count: (investigations.data ?? []).filter((i) => i.status === "processing").length },
+              { label: "Complete", count: (investigations.data ?? []).filter((i) => i.status === "complete").length },
+              { label: "Failed", count: (investigations.data ?? []).filter((i) => i.status === "failed").length },
+            ].map((s) => (
+              <div key={s.label} className="clay-inset p-3 text-center">
+                <p className="text-2xl font-semibold tabular-nums">{s.count}</p>
+                <p className="text-[11px] text-muted-foreground">{s.label}</p>
+              </div>
+            ))}
           </div>
         </ClayCard>
 
         <ClayCard className="p-5 sm:p-6" delay={0.1}>
           <SectionHeading
-            title="Workspace risk score"
-            description="Weighted across all open investigations"
+            title="Risk distribution"
+            description="Completed investigations by heuristic risk band"
           />
-          <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
-            <RiskRing score={riskScore} />
-            <ul className="w-full flex-1 space-y-2.5">
-              {RISK_FACTORS.map((f) => (
-                <li key={f.label}>
-                  <div className="mb-1 flex items-center justify-between text-[11px]">
-                    <span className="text-muted-foreground">{f.label}</span>
-                    <span className="mono tabular-nums">{f.value}</span>
-                  </div>
-                  <ClayProgress value={f.value} tone={f.tone} />
+          <ul className="space-y-2">
+            {(["critical", "high", "medium", "low"] as const).map((band) => {
+              const count = investigationRiskBands[band];
+              return (
+                <li key={band} className="flex items-center justify-between text-xs">
+                  <span className="capitalize text-muted-foreground">{band}</span>
+                  <span className="mono font-medium">{count}</span>
                 </li>
-              ))}
-            </ul>
-          </div>
+              );
+            })}
+          </ul>
+          <p className="mt-3 border-t border-border/50 pt-3 text-[10px] text-muted-foreground">
+            Finding severity breakdown
+          </p>
+          <ul className="mt-2 space-y-2">
+            {(["critical", "high", "medium", "low"] as const).map((sev) => {
+              const count = (findings.data ?? []).filter((f) => f.severity === sev).length;
+              return (
+                <li key={sev} className="flex items-center justify-between text-xs">
+                  <span className="capitalize text-muted-foreground">{sev} findings</span>
+                  <span className="mono font-medium">{count}</span>
+                </li>
+              );
+            })}
+          </ul>
+          {topRiskSignals.length > 0 && (
+            <div className="mt-4 border-t border-border/50 pt-3">
+              <p className="label-caps mb-2 text-[10px]">Top risk signals</p>
+              <ul className="space-y-1.5">
+                {topRiskSignals.map((s) => (
+                  <li key={s.type} className="flex justify-between text-[11px]">
+                    <span className="capitalize text-muted-foreground">{s.type}</span>
+                    <span className="mono">{s.count} finding{s.count === 1 ? "" : "s"}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </ClayCard>
       </div>
 
@@ -506,40 +573,47 @@ function DashboardPage() {
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: i * 0.04, duration: 0.3 }}
+                    className="flex items-start gap-2"
                   >
                     <Link
-                      to="/investigations/$investigationId"
-                      params={{ investigationId: inv.id }}
-                      className="clay-inset block p-4 transition-colors hover:border-border-strong"
+                      to="/investigations/$investigationId/$tab"
+                      params={{ investigationId: inv.id, tab: "graph" }}
+                      className="block min-w-0 flex-1 clay-inset p-4 transition-colors hover:border-border-strong"
                     >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Mono className="text-muted-foreground">
-                          {inv.investigation_ref}
-                        </Mono>
-                        <InvestigationStatusBadge status={inv.status} />
-                        <Chip>{chainLabel(inv.blockchain)}</Chip>
-                        <Chip>{inv.trace_depth} hops</Chip>
-                      </div>
-                      <p className="mt-2 text-sm font-medium">{inv.name}</p>
-                      <p className="mono mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                        <Wallet className="size-3" />
-                        {truncateAddress(inv.target_address, 12, 8)}
-                      </p>
-                      {inv.status === "processing" ? (
-                        <div className="mt-3">
-                          <div className="mb-1.5 flex justify-between text-[10px] text-muted-foreground">
-                            <span>Building bounded graph</span>
-                            <span className="mono">
-                              hop 2 / {inv.trace_depth}
-                            </span>
-                          </div>
-                          <ClayProgress
-                            value={Math.round(((inv.summary?.hops ?? 1) / (inv.trace_depth ?? 3)) * 100)}
-                            tone="intel"
-                          />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Mono className="text-muted-foreground">
+                            {inv.investigation_ref}
+                          </Mono>
+                          <InvestigationStatusBadge status={inv.status} />
+                          <Chip>{chainLabel(inv.blockchain)}</Chip>
+                          <Chip>{inv.trace_depth} hops</Chip>
                         </div>
-                      ) : null}
-                    </Link>
+                        <p className="mt-2 text-sm font-medium">{inv.name}</p>
+                        <p className="mono mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                          <Wallet className="size-3" />
+                          {truncateAddress(inv.target_address, 12, 8)}
+                        </p>
+                        {inv.status === "processing" ? (
+                          <div className="mt-3">
+                            <div className="mb-1.5 flex justify-between text-[10px] text-muted-foreground">
+                              <span>{(inv.summary as Record<string, unknown>)?.pipelineNote as string ?? "Processing"}</span>
+                              <span className="mono">
+                                {((inv.summary as Record<string, unknown>)?.progress as number) ?? 0}%
+                              </span>
+                            </div>
+                            <ClayProgress
+                              value={((inv.summary as Record<string, unknown>)?.progress as number) ?? 0}
+                              tone="intel"
+                            />
+                          </div>
+                        ) : null}
+                      </Link>
+                    <DeleteInvestigationButton
+                      investigation={inv}
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0 text-muted-foreground hover:text-destructive"
+                    />
                   </motion.li>
                 ))}
               </ul>
@@ -633,8 +707,8 @@ function DashboardPage() {
                     </div>
                     {f.investigation_id ? (
                       <Link
-                        to="/investigations/$investigationId"
-                        params={{ investigationId: f.investigation_id }}
+                        to="/investigations/$investigationId/$tab"
+                        params={{ investigationId: f.investigation_id, tab: "risk" }}
                         className="mt-2.5 inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
                       >
                         Open in workspace
@@ -649,72 +723,17 @@ function DashboardPage() {
         </div>
       )}
 
-      {/* Quick access dock + system status */}
-      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        <ClayCard className="p-5 sm:p-6" delay={0.05}>
-          <SectionHeading title="Quick access" description="Jump straight into a tool." />
-          <div className="flex flex-wrap gap-2.5">
-            <QuickAction
-              icon={Wallet}
-              label="Wallet lookup"
-              onClick={() => setCommandOpen(true)}
-            />
-            <QuickAction
-              icon={Search}
-              label="Transaction search"
-              onClick={() => setCommandOpen(true)}
-            />
-            <QuickAction
-              icon={Compass}
-              label="Entity search"
-              onClick={() => setCommandOpen(true)}
-            />
-            <QuickAction
-              icon={ShieldCheck}
-              label="Sanctions check"
-              onClick={() => setCommandOpen(true)}
-            />
-            <QuickAction
-              icon={Gauge}
-              label="Risk scan"
-              onClick={() => setCommandOpen(true)}
-            />
-            <QuickAction
-              icon={FolderOpen}
-              label="Graph explorer"
-              onClick={() => setStartInvestigationOpen(true)}
-            />
-          </div>
-        </ClayCard>
-
-        <ClayCard className="p-5 sm:p-6" delay={0.1}>
-          <SectionHeading
-            title="System status"
-            action={
-              <span className="flex items-center gap-1.5 text-[11px] text-positive">
-                <span className="pulse-ring size-1.5 rounded-full bg-positive" />
-                All systems operational
-              </span>
-            }
-          />
-          <ul className="space-y-2.5">
-            {[
-              { label: "Chain ingestion", value: 99, tone: "positive" as const },
-              { label: "Graph engine", value: 96, tone: "primary" as const },
-              { label: "Risk scoring", value: 92, tone: "intel" as const },
-              { label: "Attribution feeds", value: 88, tone: "teal" as const },
-            ].map((s) => (
-              <li key={s.label}>
-                <div className="mb-1 flex items-center justify-between text-[11px]">
-                  <span className="text-muted-foreground">{s.label}</span>
-                  <span className="mono tabular-nums">{s.value}% uptime</span>
-                </div>
-                <ClayProgress value={s.value} tone={s.tone} />
-              </li>
-            ))}
-          </ul>
-        </ClayCard>
-      </div>
+      {/* Quick investigation actions */}
+      <ClayCard className="p-5 sm:p-6" delay={0.05}>
+        <SectionHeading title="Quick investigation actions" description="Jump into common analyst workflows." />
+        <div className="flex flex-wrap gap-2.5">
+          <QuickAction icon={Radar} label="New investigation" onClick={() => setStartInvestigationOpen(true)} />
+          <QuickAction icon={Wallet} label="Wallet lookup" onClick={() => setCommandOpen(true)} />
+          <QuickAction icon={Search} label="Transaction search" onClick={() => setCommandOpen(true)} />
+          <QuickAction icon={Compass} label="Entity search" onClick={() => setCommandOpen(true)} />
+          <QuickAction icon={FileText} label="Generate report" onClick={() => setCommandOpen(true)} />
+        </div>
+      </ClayCard>
     </div>
   );
 }

@@ -147,8 +147,8 @@ function ComplaintDetail({ id }: { id: string }) {
 
       if (investigationId) {
         void navigate({
-          to: "/investigations/$investigationId",
-          params: { investigationId },
+          to: "/investigations/$investigationId/$tab",
+          params: { investigationId, tab: "graph" },
         });
       } else {
         void navigate({

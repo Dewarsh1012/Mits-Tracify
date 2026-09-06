@@ -15,6 +15,7 @@
  */
 
 import type { FindingRecord, EvidenceRecord, InvestigationRecord, Severity } from "@/lib/domain";
+import { DEFAULT_TRACE_DEPTH, MAX_TRACE_DEPTH } from "@/lib/domain";
 import { backendConfigured, backendRequest } from "@/lib/api/client";
 import { buildLiveInvestigationGraph, type GraphBuildResult } from "./blockchain/graphEngine";
 export { buildLiveInvestigationGraph, type GraphBuildResult };
@@ -43,6 +44,8 @@ export interface GraphNode {
   relevantPaths: number;
   firstSeen: string;
   riskNote?: string | undefined;
+  /** Heuristic 0–100 node exposure score (assigned by riskEngine). */
+  riskScore?: number;
 }
 
 export interface GraphEdge {
@@ -60,7 +63,7 @@ export interface GraphEdge {
 export interface InvestigationGraph {
   nodes: GraphNode[];
   edges: GraphEdge[];
-  bounds: { hops: number; maxNodes: number };
+  bounds: { hops: number; maxNodes: number; observedHops?: number };
 }
 
 export interface TracePath {
@@ -226,7 +229,14 @@ export const liveBlockchainProvider: BlockchainProvider = {
 
 /* ---------------- Graph service ---------------- */
 
-const HOP_X = [60, 260, 470, 680, 890] as const;
+const GRAPH_LAYOUT_WIDTH = 1180;
+const GRAPH_LAYOUT_MIN_X = 80;
+const GRAPH_CENTER_Y = 360;
+
+function mockHopX(hop: number, maxDepth: number): number {
+  if (maxDepth <= 0) return GRAPH_LAYOUT_MIN_X;
+  return GRAPH_LAYOUT_MIN_X + (hop / maxDepth) * (GRAPH_LAYOUT_WIDTH - GRAPH_LAYOUT_MIN_X);
+}
 
 /**
  * Build a bounded investigation graph.
@@ -238,7 +248,7 @@ export const mockGraphService: GraphService = {
     const targetAddress = investigation.target_address || "0x0000000000000000000000000000000000000000";
     const seed = String(investigation.id ?? "") + String(targetAddress);
     const summary = parseSummary(investigation.summary);
-    const depth = Math.min(Math.max(investigation.trace_depth ?? 3, 2), 4);
+    const depth = Math.min(Math.max(investigation.trace_depth ?? DEFAULT_TRACE_DEPTH, 1), MAX_TRACE_DEPTH);
 
     // Extract real metadata from summary safely
     const totalAddresses = typeof summary["addresses"] === "number" ? summary["addresses"] : 0;
@@ -258,8 +268,8 @@ export const mockGraphService: GraphService = {
       label: "Target wallet",
       kind: "target",
       hop: 0,
-      x: HOP_X[0],
-      y: 200,
+      x: mockHopX(0, depth),
+      y: GRAPH_CENTER_Y,
       valueIn: valueTraced !== "—" ? valueTraced : "—",
       valueOut: valueTraced !== "—" ? valueTraced : "—",
       connectedAddresses: totalTx > 0 ? Math.min(totalTx, 99) : 17,
@@ -275,7 +285,7 @@ export const mockGraphService: GraphService = {
     for (let hop = 1; hop <= depth; hop++) {
       const count = branchSizes[hop - 1] ?? 2;
       const layer: string[] = [];
-      const spacing = 360 / (count + 1);
+      const spacing = 560 / (count + 1);
 
       for (let i = 0; i < count; i++) {
         const id = `n${hop}_${i}`;
@@ -312,8 +322,8 @@ export const mockGraphService: GraphService = {
                   : `Intermediary wallet ${String.fromCharCode(65 + i)}`,
           kind,
           hop,
-          x: HOP_X[hop] ?? 890,
-          y: 40 + spacing * (i + 1),
+          x: mockHopX(hop, depth),
+          y: 80 + spacing * (i + 1),
           valueIn: valueTraced !== "—" ? valueTraced : `${(180 - hop * 34 - i * 18).toFixed(1)}k`,
           valueOut: valueTraced !== "—" ? valueTraced : `${(174 - hop * 34 - i * 20).toFixed(1)}k`,
           connectedAddresses: hopAddresses,
@@ -416,7 +426,9 @@ export const mockPathAnalysisService: PathAnalysisService = {
             : continuity > 0.4
               ? "Partial continuity. Fragmentation reduces confidence."
               : "Low continuity — consistent with decoy or dust activity.",
-        confidence: Math.round(continuity * 96),
+        confidence: Number(
+          Math.min(0.98, continuity * 0.85 + (endpoint.kind === "vasp" ? 0.12 : 0)).toFixed(2),
+        ),
       };
     });
   },

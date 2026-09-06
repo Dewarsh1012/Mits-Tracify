@@ -95,3 +95,43 @@ export const search = asyncHandler(async (req, res) => {
     await multiChainSearch(query.address),
   );
 });
+
+/**
+ * v1 wallet history — normalized pagination contract for integrators.
+ * Maps page/offset provider pagination to next_cursor + has_more.
+ */
+export const walletHistory = asyncHandler(async (req, res) => {
+  const params = req.params as unknown as { chain: Chain; address: string };
+  const query = req.query as unknown as {
+    direction?: "in" | "out" | "all";
+    limit?: number;
+    page?: number;
+    cursor?: string;
+    minValueUsd?: number;
+    asset?: string;
+  };
+
+  const page = query.cursor ? Number.parseInt(query.cursor, 10) || 1 : (query.page ?? 1);
+  const limit = Math.min(query.limit ?? 50, 100);
+
+  const result = await lookupTransactions(params.chain, params.address, {
+    direction: query.direction ?? "all",
+    limit,
+    page,
+    minValueUsd: query.minValueUsd,
+    asset: query.asset,
+  });
+
+  const hasMore = result.items.length === limit && result.total > page * limit;
+
+  sendSuccess(res, "Wallet transaction history", {
+    chain: params.chain,
+    address: params.address,
+    items: result.items,
+    next_cursor: hasMore ? String(page + 1) : null,
+    has_more: hasMore,
+    provider: result.source,
+    fetched_at: new Date().toISOString(),
+    total: result.total,
+  });
+});

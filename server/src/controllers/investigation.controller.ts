@@ -5,6 +5,7 @@ import {
   deleteInvestigation,
   executeTrace,
   getInvestigation,
+  getInvestigationStatus,
   listInvestigations,
   startInvestigation,
 } from "../services/investigation.service";
@@ -81,4 +82,11 @@ export const destroy = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   await deleteInvestigation(String(req.params['id']), user);
   sendSuccess(res, "Investigation deleted", { deleted: true });
+});
+
+/** Poll-friendly pipeline status for async investigation jobs. */
+export const status = asyncHandler(async (req, res) => {
+  const user = currentUser(req);
+  const payload = await getInvestigationStatus(String(req.params['id']), user);
+  sendSuccess(res, "Investigation status", payload);
 });

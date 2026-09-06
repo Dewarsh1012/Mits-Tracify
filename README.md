@@ -1,7 +1,7 @@
 # Trace & Insight
 You are the lead product engineer, senior MERN stack architect, and UI/UX engineer responsible for building this project.
 
-PROJECT NAME: tracify
+PROJECT NAME: VASPTRACE
 
 FIRST AND MOST IMPORTANT INSTRUCTION:
 

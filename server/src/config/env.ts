@@ -58,6 +58,18 @@ const envSchema = z
     LLM_SEND_FULL_ADDRESSES: z.coerce.boolean().default(false),
     LLM_SEND_VICTIM_DETAILS: z.coerce.boolean().default(false),
 
+    // Gemini investigation agent (uses LLM_API_KEY when LLM_PROVIDER=gemini)
+    GEMINI_API_KEY: z
+      .preprocess((v) => (v === "" ? undefined : v), z.string().min(1).optional()),
+    GEMINI_MODEL: z.string().min(1).default("gemini-2.5-flash"),
+    MAX_AGENT_TOOL_CALLS: z.coerce.number().int().min(1).max(200).default(50),
+    MAX_AGENT_PROVIDER_REQUESTS: z.coerce.number().int().min(1).max(500).default(100),
+    MAX_AGENT_PAGES: z.coerce.number().int().min(1).max(100).default(20),
+    MAX_AGENT_RUNTIME_SECONDS: z.coerce.number().int().min(10).max(600).default(120),
+    MAX_AGENT_HOPS: z.coerce.number().int().min(1).max(6).default(3),
+    MAX_AGENT_NODES: z.coerce.number().int().min(10).max(1000).default(500),
+    MAX_AGENT_EDGES: z.coerce.number().int().min(10).max(3000).default(1500),
+
   })
   .superRefine((value, ctx) => {
     if (value.NODE_ENV !== "production") return;
@@ -131,6 +143,13 @@ export const env = {
   hasRemoteMl: Boolean(raw.TRACIFY_ML_URL),
   /** True when an external LLM copilot is configured. */
   hasLlm: Boolean(raw.LLM_API_KEY),
+  /** Gemini key for investigation agent — prefers GEMINI_API_KEY, falls back to LLM when provider is gemini. */
+  geminiApiKey:
+    raw.GEMINI_API_KEY ??
+    (raw.LLM_PROVIDER === "gemini" ? raw.LLM_API_KEY : undefined),
+  hasGeminiAgent: Boolean(
+    raw.GEMINI_API_KEY ?? (raw.LLM_PROVIDER === "gemini" ? raw.LLM_API_KEY : undefined),
+  ),
   /** Configured intake API keys; empty disables the machine intake surface. */
   intakeApiKeys: (raw.INTAKE_API_KEYS ?? "")
     .split(",")

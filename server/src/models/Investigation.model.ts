@@ -35,6 +35,36 @@ export interface GraphEdge {
   hop: number;
 }
 
+export interface StoredTransaction {
+  txHash: string;
+  chain: Chain;
+  blockNumber?: number;
+  timestamp?: Date;
+  from: string;
+  to: string;
+  asset: string;
+  amount: number;
+  valueUsd?: number;
+  direction?: "in" | "out";
+  status: "success" | "failed" | "pending";
+  provider: string;
+}
+
+export const PIPELINE_STAGES = [
+  "QUEUED",
+  "VALIDATING",
+  "CONNECTING_TO_CHAIN",
+  "FETCHING_HISTORY",
+  "NORMALIZING_DATA",
+  "BUILDING_GRAPH",
+  "ANALYZING_PATTERNS",
+  "ATTRIBUTING_ENTITIES",
+  "GENERATING_FINDINGS",
+  "COMPLETED",
+  "FAILED",
+] as const;
+export type PipelineStage = (typeof PIPELINE_STAGES)[number];
+
 export interface InvestigationDoc extends Document {
   _id: Types.ObjectId;
   reference: string;
@@ -50,6 +80,8 @@ export interface InvestigationDoc extends Document {
   /** Which chain-data provider produced the stored graph. */
   dataSource: "graphsense" | "synthetic" | "etherscan";
   progressNote?: string;
+  pipelineStage?: PipelineStage;
+  normalizedTransactions: StoredTransaction[];
   riskScore: number;
   graph: { nodes: GraphNode[]; edges: GraphEdge[] };
   metrics: {
@@ -77,6 +109,24 @@ const nodeSchema = new Schema<GraphNode>(
     hop: { type: Number, default: 0, min: 0 },
     valueUsd: { type: Number, default: 0 },
     isVasp: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+const storedTxSchema = new Schema<StoredTransaction>(
+  {
+    txHash: { type: String, required: true },
+    chain: { type: String, enum: CHAINS, required: true },
+    blockNumber: Number,
+    timestamp: Date,
+    from: { type: String, required: true },
+    to: { type: String, required: true },
+    asset: { type: String, required: true },
+    amount: { type: Number, default: 0 },
+    valueUsd: Number,
+    direction: { type: String, enum: ["in", "out"] },
+    status: { type: String, enum: ["success", "failed", "pending"], default: "success" },
+    provider: { type: String, default: "synthetic" },
   },
   { _id: false },
 );
@@ -109,6 +159,8 @@ const investigationSchema = new Schema<InvestigationDoc>(
     progress: { type: Number, default: 0, min: 0, max: 100 },
     dataSource: { type: String, enum: ["graphsense", "synthetic", "etherscan"], default: "synthetic" },
     progressNote: { type: String, maxlength: 200 },
+    pipelineStage: { type: String, enum: PIPELINE_STAGES, default: "QUEUED" },
+    normalizedTransactions: { type: [storedTxSchema], default: [] },
     riskScore: { type: Number, default: 0, min: 0, max: 100 },
     graph: {
       nodes: { type: [nodeSchema], default: [] },

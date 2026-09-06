@@ -4,6 +4,8 @@ import {
   Investigation,
   type Chain,
   type InvestigationDoc,
+  type PipelineStage,
+  type StoredTransaction,
 } from "../models/Investigation.model";
 import type { AuthenticatedUser } from "../types/express";
 import { ApiError } from "../utils/ApiError";
@@ -12,6 +14,8 @@ import { assertCaseAccess, asObjectId, caseScopeFilter } from "./access.service"
 import { Case } from "../models/Case.model";
 import { detectSignals, rankPaths, runTrace, type TraceRequest } from "./intelligence.service";
 import { getChainProvider, syntheticProvider, traceWithProvider } from "./blockchain";
+import { assertValidAddress } from "./blockchain/validators";
+import type { TransactionSummary } from "./blockchain/types";
 
 export interface StartTraceInput {
   caseId: string;
@@ -22,6 +26,61 @@ export interface StartTraceInput {
   maxHops?: number;
   minValueUsd?: number;
   seedValueUsd?: number;
+}
+
+const STAGE_PROGRESS: Record<PipelineStage, number> = {
+  QUEUED: 0,
+  VALIDATING: 5,
+  CONNECTING_TO_CHAIN: 12,
+  FETCHING_HISTORY: 35,
+  NORMALIZING_DATA: 50,
+  BUILDING_GRAPH: 65,
+  ANALYZING_PATTERNS: 80,
+  ATTRIBUTING_ENTITIES: 90,
+  GENERATING_FINDINGS: 96,
+  COMPLETED: 100,
+  FAILED: 0,
+};
+
+function toStoredTransactions(
+  items: TransactionSummary[],
+  rootAddress: string,
+  providerId: string,
+): StoredTransaction[] {
+  const root = rootAddress.toLowerCase();
+  return items.map((tx) => ({
+    txHash: tx.txHash,
+    chain: tx.chain,
+    ...(tx.blockNumber !== undefined ? { blockNumber: tx.blockNumber } : {}),
+    ...(tx.timestamp !== undefined ? { timestamp: tx.timestamp } : {}),
+    from: tx.from,
+    to: tx.to,
+    asset: tx.asset,
+    amount: tx.amount,
+    ...(tx.valueUsd !== undefined ? { valueUsd: tx.valueUsd } : {}),
+    direction:
+      tx.to.toLowerCase() === root ? "in" : tx.from.toLowerCase() === root ? "out" : undefined,
+    status: tx.status,
+    provider: providerId,
+  }));
+}
+
+async function setPipelineStage(
+  investigation: InvestigationDoc,
+  stage: PipelineStage,
+  note: string,
+): Promise<void> {
+  investigation.pipelineStage = stage;
+  investigation.progress = STAGE_PROGRESS[stage];
+  investigation.progressNote = note;
+  if (stage === "FETCHING_HISTORY") investigation.status = "tracing";
+  if (stage === "ANALYZING_PATTERNS") investigation.status = "analysing";
+  if (stage === "COMPLETED") {
+    investigation.status = "complete";
+    investigation.completedAt = new Date();
+  }
+  if (stage === "FAILED") investigation.status = "failed";
+  await investigation.save();
 }
 
 /** Investigations are only visible through cases the user can access. */
@@ -65,24 +124,45 @@ export async function getInvestigation(id: string, user: AuthenticatedUser): Pro
   return found;
 }
 
+export async function getInvestigationStatus(id: string, user: AuthenticatedUser) {
+  const investigation = await getInvestigation(id, user);
+  return {
+    case_id: String(investigation.case),
+    investigation_id: String(investigation._id),
+    reference: investigation.reference,
+    stage: investigation.pipelineStage ?? "QUEUED",
+    progress: investigation.progress,
+    message: investigation.progressNote ?? "",
+    status: investigation.status,
+    dataSource: investigation.dataSource,
+    transactionCount: investigation.normalizedTransactions?.length ?? 0,
+    graphNodes: investigation.graph?.nodes?.length ?? 0,
+    graphEdges: investigation.graph?.edges?.length ?? 0,
+    completedAt: investigation.completedAt ?? null,
+    failureReason: investigation.failureReason ?? null,
+  };
+}
+
 /**
  * Create the investigation immediately in `queued` state and run the trace
  * asynchronously, so the API stays responsive and the client can poll progress.
  */
 export async function startInvestigation(user: AuthenticatedUser, input: StartTraceInput) {
   const parent = await assertCaseAccess(input.caseId, user);
+  const normalizedAddress = assertValidAddress(input.chain, input.rootAddress);
   const reference = await nextSequentialId("INV");
 
   const investigation = await Investigation.create({
     reference,
     case: parent._id,
     title: input.title,
-    rootAddress: input.rootAddress,
+    rootAddress: normalizedAddress,
     chain: input.chain,
     direction: input.direction ?? "outbound",
     maxHops: input.maxHops ?? 5,
     minValueUsd: input.minValueUsd ?? 0,
     status: "queued",
+    pipelineStage: "QUEUED",
     startedBy: new Types.ObjectId(user.id),
   });
 
@@ -94,23 +174,26 @@ export async function startInvestigation(user: AuthenticatedUser, input: StartTr
 /**
  * Run the intelligence pipeline and persist the resulting graph.
  *
- * The chain-data provider is resolved per chain: GraphSense when it is
- * configured and indexes that chain, the deterministic synthetic ledger
- * otherwise. A live-provider failure degrades to the synthetic trace rather
- * than failing the investigation, and the record states which source was used
- * so nothing is presented as live data when it is not.
+ * Live providers (GraphSense, Etherscan) are used whenever configured.
+ * A live-provider failure degrades to the synthetic trace rather than failing
+ * the investigation, and the record states which source was used.
  */
 export async function executeTrace(investigationId: string, seedValueUsd?: number): Promise<void> {
   try {
     const investigation = await Investigation.findById(investigationId);
     if (!investigation) return;
 
-    const provider = getChainProvider(investigation.chain);
+    await setPipelineStage(investigation, "VALIDATING", "Validating wallet address format");
+    assertValidAddress(investigation.chain, investigation.rootAddress);
 
-    investigation.status = "tracing";
-    investigation.progress = 25;
+    const provider = getChainProvider(investigation.chain);
+    await setPipelineStage(
+      investigation,
+      "CONNECTING_TO_CHAIN",
+      `Connecting to ${provider.label}`,
+    );
+
     investigation.dataSource = provider.id;
-    investigation.progressNote = `Expanding hops via ${provider.label}`;
     await investigation.save();
 
     const request: TraceRequest = {
@@ -123,15 +206,51 @@ export async function executeTrace(investigationId: string, seedValueUsd?: numbe
     };
 
     let result: Awaited<ReturnType<typeof traceWithProvider>> | ReturnType<typeof runTrace> & {
-      source: "graphsense" | "synthetic";
+      source: "graphsense" | "synthetic" | "etherscan";
     };
+    let usedLive = false;
 
-    if (provider.id === "graphsense") {
+    if (provider.id !== "synthetic") {
       try {
+        await setPipelineStage(
+          investigation,
+          "FETCHING_HISTORY",
+          `Fetching paginated transaction history via ${provider.label}`,
+        );
+
+        const txResult = await provider.getTransactions({
+          chain: investigation.chain,
+          address: investigation.rootAddress,
+          limit: 100,
+          page: 1,
+          direction: "all",
+        });
+
+        await setPipelineStage(
+          investigation,
+          "NORMALIZING_DATA",
+          `Normalizing ${txResult.items.length} on-chain records`,
+        );
+
+        investigation.normalizedTransactions = toStoredTransactions(
+          txResult.items,
+          investigation.rootAddress,
+          provider.id,
+        );
+        await investigation.save();
+
+        await setPipelineStage(
+          investigation,
+          "BUILDING_GRAPH",
+          `Expanding bounded graph (${investigation.maxHops} hops)`,
+        );
+
         result = await traceWithProvider(provider, request);
+        usedLive = true;
       } catch (error) {
         logger.warn("live provider trace failed — falling back to synthetic", {
           investigationId,
+          provider: provider.id,
           reason: error instanceof Error ? error.message : String(error),
         });
         result = { ...runTrace(request), source: syntheticProvider.id };
@@ -140,22 +259,34 @@ export async function executeTrace(investigationId: string, seedValueUsd?: numbe
       result = { ...runTrace(request), source: syntheticProvider.id };
     }
 
-    investigation.status = "analysing";
-    investigation.progress = 70;
-    await investigation.save();
+    await setPipelineStage(
+      investigation,
+      "ANALYZING_PATTERNS",
+      "Ranking value-continuity paths and behavioural signals",
+    );
 
     investigation.graph = { nodes: result.nodes, edges: result.edges };
     investigation.metrics = result.metrics;
     investigation.riskScore = result.riskScore;
     investigation.dataSource = result.source;
-    investigation.progressNote =
-      result.source === "graphsense"
-        ? "Graph sourced from GraphSense ledger index"
-        : "Graph sourced from the deterministic synthetic ledger";
-    investigation.status = "complete";
-    investigation.progress = 100;
-    investigation.completedAt = new Date();
-    await investigation.save();
+
+    await setPipelineStage(
+      investigation,
+      "ATTRIBUTING_ENTITIES",
+      "Checking known VASP and service labels",
+    );
+
+    await setPipelineStage(
+      investigation,
+      "GENERATING_FINDINGS",
+      "Preparing evidence-backed investigation summary",
+    );
+
+    investigation.progressNote = usedLive
+      ? `Graph sourced from ${provider.label} (live on-chain data)`
+      : "Graph sourced from the deterministic synthetic ledger (demo / fallback)";
+
+    await setPipelineStage(investigation, "COMPLETED", investigation.progressNote);
   } catch (error) {
     logger.error("trace execution failed", {
       investigationId,
@@ -163,7 +294,11 @@ export async function executeTrace(investigationId: string, seedValueUsd?: numbe
     });
     await Investigation.findByIdAndUpdate(investigationId, {
       status: "failed",
-      failureReason: "The trace could not be completed",
+      pipelineStage: "FAILED",
+      failureReason:
+        error instanceof ApiError
+          ? error.message
+          : "The trace could not be completed",
     });
   }
 }
@@ -181,6 +316,7 @@ export async function analyseInvestigation(id: string, user: AuthenticatedUser) 
       riskScore: investigation.riskScore,
       metrics: investigation.metrics,
       dataSource: investigation.dataSource,
+      transactions: investigation.normalizedTransactions ?? [],
     };
   }
 
@@ -190,6 +326,7 @@ export async function analyseInvestigation(id: string, user: AuthenticatedUser) 
     riskScore: investigation.riskScore,
     metrics: investigation.metrics,
     dataSource: investigation.dataSource,
+    transactions: investigation.normalizedTransactions ?? [],
   };
 }
 

@@ -21,6 +21,11 @@ investigationRouter.post(
   investigations.start,
 );
 investigationRouter.get("/:id", validate({ params: objectIdParam }), investigations.show);
+investigationRouter.get(
+  "/:id/status",
+  validate({ params: objectIdParam }),
+  investigations.status,
+);
 investigationRouter.get("/:id/graph", validate({ params: objectIdParam }), investigations.graph);
 investigationRouter.get(
   "/:id/analysis",

@@ -25,6 +25,16 @@ export function aiSystemsStatus() {
         victimDetails: env.LLM_SEND_VICTIM_DETAILS,
       },
     },
+    investigationAgent: {
+      configured: env.hasGeminiAgent,
+      model: env.GEMINI_MODEL,
+      mode: env.hasGeminiAgent ? "gemini-tools" : "deterministic-tools",
+      budgets: {
+        maxToolCalls: env.MAX_AGENT_TOOL_CALLS,
+        maxRuntimeSeconds: env.MAX_AGENT_RUNTIME_SECONDS,
+        maxHops: env.MAX_AGENT_HOPS,
+      },
+    },
   };
 }
 

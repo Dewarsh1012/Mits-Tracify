@@ -21,6 +21,8 @@ import type {
   CopilotAnswer,
   AttributionSummary,
   BackendUser,
+  AgentEventRecord,
+  AgentRunSummary,
   Complaint,
   ComplaintSource,
   FraudType,
@@ -377,6 +379,86 @@ export async function askCopilot(input: {
     { method: "POST", body: input },
   );
   return data;
+}
+
+/* ---------------- AI investigation agent (Phase 5-6) ---------------- */
+
+export const agentActiveRunsQuery = (enabled = true) =>
+  queryOptions({
+    queryKey: ["backend", "ai", "agent", "active"],
+    enabled: backendConfigured() && enabled,
+    retry: false,
+    refetchInterval: (query) => {
+      const runs = query.state.data ?? [];
+      return runs.some((r) => r.status === "RUNNING") ? 4000 : 30_000;
+    },
+    queryFn: async () => {
+      await backendAutoConnect();
+      const data = await backendRequest<{ runs: AgentRunSummary[] }>("/ai/agent/runs/active");
+      return data.runs;
+    },
+  });
+
+export const agentRunQuery = (runId: string | null, enabled = true) =>
+  queryOptions({
+    queryKey: ["backend", "ai", "agent", "run", runId],
+    enabled: backendConfigured() && enabled && Boolean(runId),
+    retry: false,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "RUNNING" ? 3000 : false;
+    },
+    queryFn: async () => {
+      await backendAutoConnect();
+      const data = await backendRequest<{ run: AgentRunSummary }>(`/ai/agent/runs/${runId}`);
+      return data.run;
+    },
+  });
+
+export const agentEventsQuery = (runId: string | null, enabled = true) =>
+  queryOptions({
+    queryKey: ["backend", "ai", "agent", "events", runId],
+    enabled: backendConfigured() && enabled && Boolean(runId),
+    retry: false,
+    refetchInterval: (query) => {
+      const runKey = query.queryKey[3] as string | null;
+      return runKey ? 4000 : false;
+    },
+    queryFn: async () => {
+      await backendAutoConnect();
+      const data = await backendRequest<{ events: AgentEventRecord[] }>(
+        `/ai/agent/runs/${runId}/events`,
+        { query: { limit: 80 } },
+      );
+      return data.events;
+    },
+  });
+
+export async function startAgentInvestigation(input: {
+  chain: string;
+  address: string;
+  objective?: string;
+  direction?: "outbound" | "inbound" | "both";
+  maxHops?: number;
+  externalInvestigationId?: string;
+}) {
+  await backendAutoConnect();
+  return backendRequest<{
+    agent_run_id: string;
+    investigation_id: string;
+    status: string;
+    stage: string;
+    plan: string[];
+    gemini_configured: boolean;
+  }>("/ai/agent/investigate", { method: "POST", body: input });
+}
+
+export async function agentRunChat(runId: string, question: string) {
+  await backendAutoConnect();
+  return backendRequest<{ answer: string; provider: string; model: string; provenance: string }>(
+    `/ai/agent/runs/${runId}/chat`,
+    { method: "POST", body: { question } },
+  );
 }
 
 /* ---------------- Blockchain Intelligence & Transactions ---------------- */

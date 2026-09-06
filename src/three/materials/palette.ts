@@ -6,16 +6,16 @@ import * as THREE from "three";
  * amber = attention, red = critical risk, green = verified attribution.
  */
 export const PAL = {
-  void: new THREE.Color("#0a0d14"),
-  dim: new THREE.Color("#2b3345"),
-  grey: new THREE.Color("#5a657d"),
-  signal: new THREE.Color("#4da3ff"),
-  accent: new THREE.Color("#6e8cff"),
-  violet: new THREE.Color("#8b7cff"),
-  amber: new THREE.Color("#ffb84d"),
-  critical: new THREE.Color("#ff5c70"),
-  verified: new THREE.Color("#4ce0a3"),
-  light: new THREE.Color("#eaf2ff"),
+  void: new THREE.Color("#080a0f"),
+  dim: new THREE.Color("#252b38"),
+  grey: new THREE.Color("#5c667a"),
+  signal: new THREE.Color("#22d3ee"),
+  accent: new THREE.Color("#38bdf8"),
+  violet: new THREE.Color("#818cf8"),
+  amber: new THREE.Color("#fbbf24"),
+  critical: new THREE.Color("#f87171"),
+  verified: new THREE.Color("#34d399"),
+  light: new THREE.Color("#eef2f8"),
 };
 
-export const BG = "#06070a";
+export const BG = "#080a0f";

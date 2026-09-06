@@ -251,6 +251,49 @@ export interface AiSystemsStatus {
     model: string;
     egress: { fullAddresses: boolean; victimDetails: boolean };
   };
+  investigationAgent?: {
+    configured: boolean;
+    model: string;
+    mode: string;
+    budgets: { maxToolCalls: number; maxRuntimeSeconds: number; maxHops: number };
+  };
+}
+
+export type AgentRunStatus =
+  | "QUEUED"
+  | "RUNNING"
+  | "AWAITING_REVIEW"
+  | "COMPLETED"
+  | "FAILED"
+  | "BUDGET_EXCEEDED";
+
+export interface AgentRunSummary {
+  id: string;
+  status: AgentRunStatus;
+  stage: string;
+  chain: string;
+  rootAddress: string;
+  objective?: string;
+  toolCalls?: number;
+  assessment?: string;
+  plan?: string[];
+  geminiConfigured?: boolean;
+  error?: string;
+  completedAt?: string;
+  createdAt?: string;
+  externalInvestigationId?: string;
+  updatedAt?: string;
+}
+
+export interface AgentEventRecord {
+  id: string;
+  timestamp: string;
+  eventType: string;
+  toolName?: string;
+  resultSummary?: string;
+  success: boolean;
+  latencyMs?: number;
+  stage?: string;
 }
 
 export interface RouteAnomalyPrediction {

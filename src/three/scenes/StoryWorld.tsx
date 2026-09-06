@@ -77,15 +77,15 @@ export function StoryWorld() {
       <ambientLight intensity={0.38} />
 
       {/* Portal-zone key light — strong blue over the entry gate */}
-      <pointLight position={[0, 12, 58]}   intensity={140} color="#4da3ff" distance={180} />
+      <pointLight position={[0, 12, 58]}   intensity={140} color="#22d3ee" distance={180} />
       {/* Mid-world fill — main trace path */}
-      <pointLight position={[20, -10, -300]} intensity={130} color="#4da3ff" distance={280} />
+      <pointLight position={[20, -10, -300]} intensity={130} color="#38bdf8" distance={280} />
       {/* Network cluster — violet tint */}
-      <pointLight position={[-18, 8, -370]}  intensity={100} color="#8b7cff" distance={220} />
-      {/* Evidence / intelligence zone — cool blue */}
-      <pointLight position={[0, 18, -540]}   intensity={110} color="#6e8cff" distance={250} />
-      {/* Reveal finale — warm green accent for the verified palette */}
-      <pointLight position={[0, -8, -660]}   intensity={90}  color="#4ce0a3" distance={180} />
+      <pointLight position={[-18, 8, -370]}  intensity={100} color="#818cf8" distance={220} />
+      {/* Evidence / intelligence zone — cool cyan */}
+      <pointLight position={[0, 18, -540]}   intensity={110} color="#38bdf8" distance={250} />
+      {/* Reveal finale — mint accent for verified palette */}
+      <pointLight position={[0, -8, -660]}   intensity={90}  color="#34d399" distance={180} />
 
       <CameraRig />
 

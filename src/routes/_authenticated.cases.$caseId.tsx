@@ -26,6 +26,7 @@ import {
   PriorityBadge,
   SeverityBadge,
 } from "@/components/vt/badges";
+import { DeleteInvestigationButton } from "@/components/vt/DeleteInvestigationButton";
 import {
   EmptyState,
   ErrorState,
@@ -204,26 +205,36 @@ function CaseDetailPage() {
             />
           ) : (
             (investigations.data ?? []).map((inv) => (
-              <Link
+              <div
                 key={inv.id}
-                to="/investigations/$investigationId"
-                params={{ investigationId: inv.id }}
-                className="panel block px-4 py-3.5 transition-colors hover:border-border-strong"
+                className="panel flex items-start gap-3 px-4 py-3.5 transition-colors hover:border-border-strong"
               >
-                <div className="flex flex-wrap items-center gap-2">
-                  <Mono className="text-muted-foreground">
-                    {inv.investigation_ref}
-                  </Mono>
-                  <InvestigationStatusBadge status={inv.status} />
-                  <Chip>{chainLabel(inv.blockchain)}</Chip>
-                  <Chip>{inv.trace_depth} hops</Chip>
-                </div>
-                <p className="mt-2 text-sm font-medium">{inv.name}</p>
-                <p className="mono mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <Wallet className="size-3" />
-                  {truncateAddress(inv.target_address, 14, 10)}
-                </p>
-              </Link>
+                <Link
+                  to="/investigations/$investigationId/$tab"
+                  params={{ investigationId: inv.id, tab: "overview" }}
+                  className="min-w-0 flex-1"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Mono className="text-muted-foreground">
+                      {inv.investigation_ref}
+                    </Mono>
+                    <InvestigationStatusBadge status={inv.status} />
+                    <Chip>{chainLabel(inv.blockchain)}</Chip>
+                    <Chip>{inv.trace_depth} hops</Chip>
+                  </div>
+                  <p className="mt-2 text-sm font-medium">{inv.name}</p>
+                  <p className="mono mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Wallet className="size-3" />
+                    {truncateAddress(inv.target_address, 14, 10)}
+                  </p>
+                </Link>
+                <DeleteInvestigationButton
+                  investigation={inv}
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0 text-muted-foreground hover:text-destructive"
+                />
+              </div>
             ))
           )}
         </TabsContent>

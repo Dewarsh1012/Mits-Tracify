@@ -131,6 +131,43 @@ export const investigationQuery = (id: string) =>
       ),
   });
 
+/** Live on-chain tx history — always fetched from Etherscan key, never from DB cache. */
+export const investigationTransactionsQuery = (
+  investigation: InvestigationRecord | null | undefined,
+) =>
+  queryOptions({
+    queryKey: [
+      "investigation-transactions-live",
+      investigation?.id,
+      investigation?.target_address,
+      investigation?.blockchain,
+      investigation?.min_value,
+      investigation?.window_start,
+      investigation?.window_end,
+    ],
+    enabled: Boolean(investigation?.target_address),
+    staleTime: 0,
+    gcTime: 60_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    queryFn: async () => {
+      const { fetchInvestigationTransactions } = await import(
+        "@/services/blockchain/liveAdapter"
+      );
+      return fetchInvestigationTransactions(
+        investigation!.blockchain || "ethereum",
+        investigation!.target_address,
+        50,
+        {
+          includeTokens: true,
+          minValueUsd: investigation!.min_value ?? 0,
+          windowStart: investigation!.window_start,
+          windowEnd: investigation!.window_end,
+        },
+      );
+    },
+  });
+
 export interface InvestigationInput {
   case_id: string;
   name: string;
@@ -177,6 +214,11 @@ export async function updateInvestigation(
       .select()
       .single()) as never,
   );
+}
+
+export async function deleteInvestigation(id: string) {
+  const { error } = await supabase.from("investigations").delete().eq("id", id);
+  if (error) throw new Error(error.message);
 }
 
 /* ---------------- Findings ---------------- */

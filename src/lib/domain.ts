@@ -34,6 +34,7 @@ export const BLOCKCHAINS = [
   { id: "polygon", label: "Polygon", symbol: "MATIC", supported: true },
   { id: "bsc", label: "BNB Smart Chain", symbol: "BNB", supported: true },
   { id: "arbitrum", label: "Arbitrum One", symbol: "ETH", supported: true },
+  { id: "base", label: "Base", symbol: "ETH", supported: true },
   { id: "bitcoin", label: "Bitcoin", symbol: "BTC", supported: false },
   { id: "tron", label: "Tron", symbol: "TRX", supported: false },
 ] as const;
@@ -47,6 +48,15 @@ export const EVIDENCE_TYPES = [
   "screenshot",
   "reference",
 ] as const;
+
+/** Bounded multi-hop trace limits (investigation graph). */
+export const MIN_TRACE_DEPTH = 1;
+export const MAX_TRACE_DEPTH = 20;
+export const DEFAULT_TRACE_DEPTH = 5;
+export const TRACE_DEPTH_OPTIONS = Array.from(
+  { length: MAX_TRACE_DEPTH - MIN_TRACE_DEPTH + 1 },
+  (_, i) => MIN_TRACE_DEPTH + i,
+);
 export type EvidenceType = (typeof EVIDENCE_TYPES)[number];
 
 export interface InvestigationSummary {
@@ -57,6 +67,31 @@ export interface InvestigationSummary {
   vaspCandidates?: number;
   valueTraced?: string;
   continuity?: number;
+  /** Pipeline orchestration state */
+  pipelineStage?: string;
+  progress?: number;
+  pipelineNote?: string;
+  dataSource?: "live" | "fallback";
+  isLive?: boolean;
+  rawTxCount?: number;
+  error?: string;
+  /** Persisted analysis artifact (graph, paths, entities, signals, timeline) */
+  graph?: unknown;
+  paths?: unknown;
+  entities?: unknown;
+  signals?: unknown;
+  timeline?: unknown;
+  generatedFindings?: unknown;
+  /** Unified heuristic investigation risk (0–100). */
+  riskScore?: number;
+  riskBand?: "low" | "medium" | "high" | "critical";
+  riskFactors?: Array<{
+    id: string;
+    label: string;
+    contribution: number;
+    description: string;
+  }>;
+  riskNodeScores?: Record<string, number>;
 }
 
 export interface CaseRecord {
